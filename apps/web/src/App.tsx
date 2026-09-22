@@ -1,65 +1,71 @@
-import { useCallback, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ScoreDocument } from "@stdbd/core";
 import { AlphaTabRenderer } from "@stdbd/render";
-import { colors, typography } from "@stdbd/ui";
+import { ScoreEditor } from "./features/editor/ScoreEditor";
+import { useEditor } from "./features/editor/useEditor";
+import { TransportBar } from "./features/playback/TransportBar";
 import { demoScore } from "./demo/demoScore";
+import { attachAutosave, loadActiveScore } from "./services/score-store";
 
 export function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [doc] = useState(() => new ScoreDocument({ initialScore: demoScore }));
+  const [renderer, setRenderer] = useState<AlphaTabRenderer | null>(null);
   const rendererRef = useRef<AlphaTabRenderer | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const editor = useEditor({ document: doc, renderer });
 
-  const handleLoad = useCallback(() => {
-    if (!containerRef.current || rendererRef.current) return;
-    const renderer = new AlphaTabRenderer(containerRef.current);
-    renderer.mount();
-    renderer.loadScore(demoScore);
-    setLoaded(true);
-    rendererRef.current = renderer;
+  const { container } = editor;
+
+  // mount alphaTab once the editor container exists (StrictMode-safe)
+  useEffect(() => {
+    if (!container || rendererRef.current) return;
+    const instance = new AlphaTabRenderer(container);
+    instance.mount();
+    rendererRef.current = instance;
+    setRenderer(instance);
+  }, [container]);
+
+  useEffect(() => {
+    return () => {
+      rendererRef.current?.dispose();
+      rendererRef.current = null;
+    };
   }, []);
 
+  // restore last session, then autosave on every edit
+  useEffect(() => {
+    let cancelled = false;
+    void loadActiveScore().then((saved) => {
+      if (!cancelled && saved) doc.reset(saved);
+    });
+    const off = attachAutosave(doc);
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [doc]);
+
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: colors.bg,
-        color: colors.text,
-        fontFamily: typography.fontFamily,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <header
-        style={{
-          padding: "16px 24px",
-          borderBottom: `1px solid ${colors.border}`,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
-          <span style={{ fontSize: typography.sizeLg, fontWeight: 700 }}>stdBd</span>
-          <span style={{ fontSize: typography.sizeSm, color: colors.textMuted }}>
-            Phase 0 — vertical slice
-          </span>
+    <div className="app">
+      <header className="topbar">
+        <div className="brand-row">
+          <span className="brand">stdBd</span>
+          <span className="subtitle">Guitar Tab Editor — Phase 1a</span>
         </div>
-        <button
-          onClick={handleLoad}
-          style={{
-            background: loaded ? colors.bgPanel : colors.accent,
-            color: colors.text,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 8,
-            padding: "8px 20px",
-            fontSize: typography.sizeSm,
-            cursor: "pointer",
-          }}
-        >
-          {loaded ? "Score loaded" : "Load demo score"}
-        </button>
+        <TransportBar
+          renderer={renderer}
+          canUndo={doc.canUndo}
+          canRedo={doc.canRedo}
+          onUndo={editor.undo}
+          onRedo={editor.redo}
+        />
       </header>
-      <main style={{ flex: 1, padding: 24, overflow: "auto" }}>
-        <div ref={containerRef} />
+      <main className="workspace">
+        <ScoreEditor
+          score={editor.score}
+          caret={editor.caret}
+          editor={editor}
+          renderer={renderer}
+        />
       </main>
     </div>
   );

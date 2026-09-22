@@ -13,7 +13,10 @@ export class AlphaTabConverter {
     if (score.artist) parts.push(`\\artist "${escapeTex(score.artist)}"`);
     const tempo = score.bars.find((b) => b.tempo !== null)?.tempo ?? 120;
     parts.push(`\\tempo ${tempo}`);
-    parts.push(".");
+    const firstSignature = score.bars[0]?.timeSignature;
+    if (firstSignature) {
+      parts.push(`\\ts(${firstSignature.numerator} ${firstSignature.denominator})`);
+    }
 
     for (const track of score.tracks) {
       if (score.tracks.length > 1) {
@@ -26,28 +29,24 @@ export class AlphaTabConverter {
 
   private trackBarsToTex(track: Track, score: Score): string {
     const bars: string[] = [];
-    let previousTimeSignature: { numerator: number; denominator: number } | null = null;
 
     for (const bar of score.bars) {
       const notes = bar.voices[0]?.notes ?? [];
       const beats = this.groupIntoBeats(notes, bar);
       const barParts: string[] = [];
 
-      if (
-        previousTimeSignature === null ||
-        previousTimeSignature.numerator !== bar.timeSignature.numerator ||
-        previousTimeSignature.denominator !== bar.timeSignature.denominator
-      ) {
-        barParts.push(`:${bar.timeSignature.numerator}/${bar.timeSignature.denominator}`);
-      }
-      previousTimeSignature = bar.timeSignature;
-
       for (const beat of beats) {
+        const duration = `:${durationName(beat.duration)}`;
         if (beat.notes.length === 0) {
-          barParts.push(`:${durationName(beat.duration)} r`);
+          barParts.push(`${duration} r`);
           continue;
         }
-        barParts.push(beat.notes.map((n) => this.noteToTex(n, track)).join(" "));
+        const tokens = beat.notes.map((n) => this.noteToTex(n, track));
+        barParts.push(
+          beat.notes.length > 1
+            ? `${duration} (${tokens.join(" ")})`
+            : `${duration} ${tokens[0]}`,
+        );
       }
       bars.push(barParts.join(" ") + " |");
     }
@@ -56,9 +55,9 @@ export class AlphaTabConverter {
 
   private noteToTex(note: Note, track: Track): string {
     if (track.tuning !== null && note.string !== null && note.fret !== null) {
-      // alphaTex numbers strings 1..n from the LOWEST string; our model is 0-based highest-first
-      const stringCount = track.tuning.strings.length;
-      const texString = stringCount - note.string;
+      // alphaTex note suffix `fret.string` counts strings 1-based from the TOP line
+      // (1 = highest pitch); our model is 0-based highest-first.
+      const texString = note.string + 1;
       return `${note.fret}.${texString}`;
     }
     // non-fretted instruments: absolute pitch via MIDI-to-name conversion
@@ -126,3 +125,4 @@ function midiToTexPitch(midi: number): string {
 function escapeTex(text: string): string {
   return text.replace(/"/g, '\\"');
 }
+

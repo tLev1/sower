@@ -21,11 +21,11 @@
 - [x] Vertical slice: demo score → render (alphaTab)
 
 ### Phase 1a — Guitar tab editing (~8 wks)
-- [ ] Score document store (autosave, IndexedDB persistence)
-- [ ] Undo/redo history over command stream
-- [ ] Guitar TAB editing: add/remove notes, fret input, string selection, bar management
-- [ ] Playback v1 (alphaSynth via alphaTab; mixer per-track)
-- [ ] Keyboard-first shortcuts (guitarist workflow: type frets 0-9, arrow keys navigate)
+- [x] Score document store (autosave, IndexedDB persistence)
+- [x] Undo/redo history over command stream
+- [x] Guitar TAB editing: add/remove notes, fret input, string selection (bar management next)
+- [x] Playback v1 (alphaSynth via alphaTab; per-track mixer next)
+- [x] Keyboard-first shortcuts (guitarist workflow: type frets 0-9, arrow keys navigate)
 
 ### Phase 1b — Notation + articulations (~4 wks)
 - [ ] Standard notation view toggle (same data)
@@ -76,3 +76,4 @@
 - Build in public (X / r/guitar) from first usable milestone
 - Timebox hum-correction prototype to 2 weeks; pivot to drag-only if feel isn't there
 - "Sounds real?" playback checklist tested every sprint (producer-ear QA)
+

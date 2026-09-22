@@ -12,23 +12,24 @@ export function buildDemoScore(): Score {
 
   const licks: { fret: number; string: number }[][] = [
     // Bar 1: E minor pentatonic ascending, open position
+    // strings are visual (0 = high E): E G | B D | G A | D E
     [
       { fret: 0, string: 0 },
       { fret: 3, string: 0 },
       { fret: 0, string: 1 },
-      { fret: 2, string: 1 },
+      { fret: 3, string: 1 },
       { fret: 0, string: 2 },
       { fret: 2, string: 2 },
       { fret: 0, string: 3 },
       { fret: 2, string: 3 },
     ],
-    // Bar 2: descending resolution
+    // Bar 2: descending resolution — all E minor pentatonic tones
     [
       { fret: 2, string: 3 },
       { fret: 0, string: 3 },
       { fret: 2, string: 2 },
       { fret: 0, string: 2 },
-      { fret: 2, string: 1 },
+      { fret: 3, string: 1 },
       { fret: 0, string: 1 },
       { fret: 3, string: 0 },
       { fret: 0, string: 0 },

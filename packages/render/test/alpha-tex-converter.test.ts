@@ -46,16 +46,16 @@ describe("AlphaTabConverter", () => {
     expect(tex).toContain('\\title "Test Score"');
     expect(tex).toContain('\\artist "Test Artist"');
     expect(tex).toContain("\\tempo 96");
-    expect(tex).toContain(":4/4");
+    expect(tex).toContain("\\ts(4 4)");
   });
 
-  it("maps frets and strings (0-based highest-first -> 1-based lowest-first)", () => {
+  it("maps frets and strings (0-based highest-first -> 1-based top-line-first)", () => {
     const tex = new AlphaTabConverter().convert(makeGuitarScore());
-    // string 0 (high E, our 0-based) -> alphaTex string 6
-    expect(tex).toContain("0.6");
-    expect(tex).toContain("3.6");
-    // string 1 -> alphaTex string 5
-    expect(tex).toContain("2.5");
+    // string 0 (high E, our 0-based) -> alphaTex string 1
+    expect(tex).toContain("0.1");
+    expect(tex).toContain("3.1");
+    // string 1 -> alphaTex string 2
+    expect(tex).toContain("2.2");
   });
 
   it("fills gaps with rests and emits bar separators", () => {

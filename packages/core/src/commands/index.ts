@@ -7,3 +7,5 @@ export type {
   SetNotePitch,
   SetTrackInstrument,
 } from "./commands.js";
+export { ScoreDocument } from "./score-document.js";
+export type { ScoreDocumentOptions } from "./score-document.js";
