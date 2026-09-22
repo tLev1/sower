@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ScoreDocument } from "@stdbd/core";
-import { AlphaTabRenderer } from "@stdbd/render";
+import { StdbdEngine } from "@stdbd/render";
 import { ScoreEditor } from "./features/editor/ScoreEditor";
 import { useEditor } from "./features/editor/useEditor";
 import { TransportBar } from "./features/playback/TransportBar";
@@ -9,16 +9,16 @@ import { attachAutosave, loadActiveScore } from "./services/score-store";
 
 export function App() {
   const [doc] = useState(() => new ScoreDocument({ initialScore: demoScore }));
-  const [renderer, setRenderer] = useState<AlphaTabRenderer | null>(null);
-  const rendererRef = useRef<AlphaTabRenderer | null>(null);
+  const [renderer, setRenderer] = useState<StdbdEngine | null>(null);
+  const rendererRef = useRef<StdbdEngine | null>(null);
   const editor = useEditor({ document: doc, renderer });
 
   const { container } = editor;
 
-  // mount alphaTab once the editor container exists (StrictMode-safe)
+  // mount the engine once the editor container exists (StrictMode-safe)
   useEffect(() => {
     if (!container || rendererRef.current) return;
-    const instance = new AlphaTabRenderer(container);
+    const instance = new StdbdEngine(container);
     instance.mount();
     rendererRef.current = instance;
     setRenderer(instance);

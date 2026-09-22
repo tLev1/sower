@@ -1,13 +1,23 @@
+/* Bravura — SMuFL music font for all engraving glyphs */
+@font-face {
+  font-family: "Bravura";
+  src: url("/fonts/Bravura.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
 :root {
-  --bg: #0e1116;
-  --bg-elevated: #161b24;
-  --bg-panel: #1c2330;
-  --border: #2a3342;
-  --text: #e8ecf3;
+  --bg: #0d1015;
+  --bg-elevated: #131820;
+  --bg-panel: #1a212d;
+  --border: #262f3d;
+  --text: #e9edf4;
   --text-muted: #8b95a8;
   --accent: #4f8cff;
   --accent-hover: #6b9eff;
-  --selection: rgba(79, 140, 255, 0.18);
+  --selection: rgba(79, 140, 255, 0.16);
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -26,9 +36,10 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "Inter Variable", Inter, "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .app {
@@ -37,6 +48,8 @@ body {
   height: 100vh;
 }
 
+/* ---------- top bar ---------- */
+
 .topbar {
   display: flex;
   align-items: center;
@@ -44,7 +57,8 @@ body {
   gap: 16px;
   padding: 12px 20px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
+  background: linear-gradient(180deg, #171e29, #131a24);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
 }
 
 .brand-row {
@@ -55,7 +69,7 @@ body {
 
 .brand {
   font-size: 18px;
-  font-weight: 700;
+  font-weight: 720;
   letter-spacing: 0.02em;
 }
 
@@ -155,24 +169,34 @@ body {
   outline: none;
   min-height: 420px;
   padding: 20px 24px;
-  background: var(--bg-elevated);
+  background:
+    radial-gradient(1200px 400px at 50% -200px, rgba(79, 140, 255, 0.05), transparent),
+    var(--bg-elevated);
 }
 
 .score-scroll:focus-visible {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-.caret-overlay {
-  display: none;
-  position: absolute;
-  pointer-events: none;
-  border: 1px solid var(--accent);
-  background: var(--selection);
-  border-radius: 4px;
-  transition:
-    left 120ms var(--ease-out),
-    top 120ms var(--ease-out);
+/* engine surfaces */
+
+.stdb-score-wrap {
+  position: relative;
 }
+
+.stdb-score-static {
+  display: block;
+}
+
+.stdb-score-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+/* ---------- status bar ---------- */
 
 .status-bar {
   display: flex;
@@ -193,7 +217,7 @@ body {
 .strings {
   display: flex;
   gap: 6px;
-  font-family: "JetBrains Mono", Consolas, monospace;
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", Consolas, monospace;
 }
 
 .string {
@@ -205,9 +229,4 @@ body {
 .string.active {
   background: var(--accent);
   color: #fff;
-}
-
-/* alphaTab surface on dark UI */
-svg {
-  display: block;
 }

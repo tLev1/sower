@@ -21,7 +21,7 @@ core: depends on NOTHING
 ```
 apps/web          React app — composition, routing, providers only
 packages/core     model/ commands/ operations/  (pure, fully unit-tested)
-packages/render   ScoreRenderer interface + alphatab-adapter
+packages/render   ScoreRenderer interface + engraving engine (in-house, SVG)
 packages/audio    SynthEngine, LatencyProbe contracts (implementations later)
 packages/ui       design tokens (colors, motion, spacing) + components later
 tooling/          shared eslint config
@@ -33,7 +33,8 @@ docs/             ROADMAP, this file, ADRs/
 | Decision | Choice | Why |
 |---|---|---|
 | Language | TypeScript strict | typed-language fit; ecosystem for notation/audio |
-| Renderer | alphaTab (`@coderline/alphatab`) | tabs+notation+GP import+synth out of the box; behind adapter so swappable |
+| Renderer | **in-house engraving engine** (SVG + Bravura/SMuFL, `packages/render/src/engine`) | full control of look/feel/latency; no external rendering dependency; layout is pure & unit-tested (ADR-003) |
+| Playback | WebAudio Karplus-Strong synth (v1), articulation-aware | zero-asset instant playback; sample engines plug in later via the same adapter seam |
 | Score format | own immutable model, MusicXML-compatible | full control; MusicXML import/export as adapters |
 | Editing | event-sourced commands | undo/redo + versioning + live-session review for free |
 | Timing | 480 ticks/quarter | standard resolution, matches MIDI |

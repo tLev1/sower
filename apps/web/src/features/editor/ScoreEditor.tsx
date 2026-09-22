@@ -1,43 +1,36 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { openStringPitch, type Caret } from "./caret";
 import type { useEditor } from "./useEditor";
-import type { AlphaTabRenderer } from "@stdbd/render";
+import type { StdbdEngine } from "@stdbd/render";
 import type { Score } from "@stdbd/core";
 
 interface ScoreEditorProps {
   score: Score;
   caret: Caret;
   editor: ReturnType<typeof useEditor>;
-  renderer: AlphaTabRenderer | null;
+  renderer: StdbdEngine | null;
 }
 
 /**
  * The score canvas + keyboard editing surface.
- * Keyboard-first workflow (Phase 1a): arrows navigate, digits enter frets,
- * Backspace deletes, Ctrl+Z/Shift+Z history, Space toggles playback.
+ * The engine draws the score and the caret/playhead overlays; React only
+ * keeps it in sync with the document and caret state.
  */
 export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-
   // re-render whenever the document changes
   useEffect(() => {
     if (renderer) renderer.loadScore(score);
   }, [renderer, score]);
 
-  // position the caret overlay over the current master bar
+  // caret line follows the editing position; playback starts from the caret
   useEffect(() => {
-    const overlay = overlayRef.current;
-    if (!overlay || !renderer) return;
-    const rect = renderer.getBarRect(caret.barIndex);
-    if (rect) {
-      overlay.style.display = "block";
-      overlay.style.left = `${rect.x}px`;
-      overlay.style.top = `${rect.y}px`;
-      overlay.style.width = `${rect.w}px`;
-      overlay.style.height = `${rect.h}px`;
-    } else {
-      overlay.style.display = "none";
-    }
+    if (!renderer) return;
+    renderer.setCaret({
+      barIndex: caret.barIndex,
+      tick: caret.tick,
+      stringIndex: caret.stringIndex,
+    });
+    renderer.setStartPosition({ barIndex: caret.barIndex, tick: caret.tick });
   }, [renderer, caret, score]);
 
   const stringLabels = Array.from(
@@ -49,7 +42,6 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
     <div className="editor-wrap">
       <div className="score-stack">
         <div className="score-scroll" role="application" aria-label="Score editor" ref={editor.setContainer} />
-        <div ref={overlayRef} className="caret-overlay" />
       </div>
       <div className="status-bar">
         <span>

@@ -33,11 +33,13 @@ Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
 | Node | v24 LTS via Scoop | a second `nodejs` install exists in PATH but has no pnpm |
 | Language | TypeScript ~5.9.3, strict + noUncheckedIndexedAccess | **Do NOT upgrade to TS 7** — typescript-eslint doesn't support it yet |
 | UI | React 19 + Vite 8 (rolldown) | score canvas is plain TS/DOM, React only wraps chrome |
-| Rendering | alphaTab 1.8.4 (`@coderline/alphatab`) + `@coderline/alphatab-vite` plugin | behind `ScoreRenderer` adapter, swappable |
-| Tests | Vitest 3 | 34 tests green |
+| Rendering | **stdBd engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
+| Playback | WebAudio Karplus-Strong synth (v1) | articulation-aware; sample engines plug in via SynthEngine seam later |
+| Fonts | Bravura (public/fonts), Inter Variable + JetBrains Mono Variable (fontsource) | music glyphs + UI/mono type |
+| Tests | Vitest 3 | 23 tests green (16 core + 7 render layout) |
 | Lint | ESLint flat config, typescript-eslint strictTypeChecked | `any` is an error; `scripts/` ignored |
 | CI | `.github/workflows/ci.yml` | lint → typecheck → test → build |
-| E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** (same cause as corepack spawn failure) — always launch Edge |
+| E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** — always launch Edge |
 
 ## 3. Repository layout
 
@@ -45,27 +47,31 @@ Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
 C:\dev\stdBd
 ├── apps/web/                  React app (composition only)
 │   └── src/
-│       ├── App.tsx            wires document + renderer + editor + transport
+│       ├── App.tsx            wires document + engine + editor + transport
 │       ├── features/editor/   caret.ts (pure nav logic + tests),
 │       │                      useEditor.ts (state + keymap + click handling),
 │       │                      ScoreEditor.tsx (canvas + status bar)
 │       ├── features/playback/TransportBar.tsx
 │       ├── services/score-store.ts   IndexedDB load/save + debounced autosave
 │       ├── demo/demoScore.ts  2-bar Em pentatonic demo (initial document)
-│       └── styles/global.css  dark theme, tokens mirrored as CSS vars
+│       └── styles/global.css  dark theme, tokens as CSS vars, Bravura @font-face
 ├── packages/core/             PURE domain — zero dependencies
 │   └── src/
-│       ├── model/score.ts     Score/Track/Bar/Voice/Note, branded ids
-│       │                      (TrackId/BarId/NoteId), 480 ticks per quarter
+│       ├── model/score.ts     Score/Track/Bar/Voice/Note, branded ids, 480 tpq
 │       ├── commands/          commands.ts (pure applyCommand), score-document.ts
-│       │                      (ScoreDocument: snapshot undo/redo, subscribe, reset)
 │       └── operations/        tempoAtBar, barStartTime, validateBar, id allocator
 ├── packages/render/           ScoreRenderer + ScorePlayer + ScoreInteraction
-│   │                          interfaces; alphatab-adapter:
-│   └── src/alphatab-adapter/
-│       ├── alpha-tex-converter.ts   core Score → alphaTex (fully unit-tested)
-│       └── alphatab-renderer.ts     AlphaTabApi owner: render, play, positionAt
-│                                  (click hit-testing), getBarRect (caret overlay)
+│   └── src/engine/            THE ENGINE (in-house, since ADR-003):
+│       ├── layout.ts          pure Score → geometry (systems/bars/beats,
+│       │                      hit-testing, caret/playhead anchors) — tested
+│       ├── engraving.ts       layout → inline SVG (Bravura glyphs, TAB staff,
+│       │                      beams, rests, header)
+│       ├── engine.ts          StdbdEngine: mount/load/positionAt/setCaret/
+│       │                      setPlayhead/onPositionChanged/dispose
+│       ├── player.ts          WebAudioPlayer (Karplus-Strong, tempo map,
+│       │                      lookahead scheduler, articulations)
+│       ├── smufl.ts           SMuFL codepoints (Bravura)
+│       └── theme.ts           engraving colors from @stdbd/ui tokens
 ├── packages/audio/            SynthEngine + LatencyProbe contracts (no impl yet)
 ├── packages/ui/               design tokens (colors/motion/spacing + liveInput budgets)
 ├── scripts/
@@ -82,138 +88,129 @@ pnpm install
 pnpm dev                 # Vite dev server → http://localhost:5173
 pnpm lint                # ESLint (root, flat config)
 pnpm typecheck           # tsc --noEmit per package
-pnpm test                # Vitest, all packages (34 tests)
+pnpm test                # Vitest, all packages (23 tests)
 pnpm build               # typecheck + vite build
 node scripts/inspect-page.mjs     # with dev server running; screenshot → C:\dev\temp\opencode\page.png
 node scripts/interact-test.mjs    # interaction regression (uses real mouse/keys)
 ```
 
-Git repo initialized on `main`; make commits as you go (conventional commits).
+Git repo on `main`; commit as you go (conventional commits).
 
 ## 5. What is implemented
 
 ### Phase 0 — Foundation (complete)
 - Monorepo, strict toolchain, CI, design tokens package.
-- Core model: immutable `Score` (title/artist/tracks/bars), `Track` (instrument,
-  clef, tuning, GM program, volume/pan/mute/solo), `Bar` (time sig, key change,
-  tempo, voices), `Note` (pitch, string/fret, start/duration in ticks, velocity,
-  articulations union type). Branded id types prevent id mix-ups.
-- Event-sourced editing: pure `Command` variants (setNotePitch, setNoteDuration,
-  addNote, removeNote, setTrackInstrument) applied via `applyCommand` (returns
-  new immutable Score, throws on dangling refs). `ScoreDocument` = editing
-  session with exact snapshot history (ids survive undo/redo), maxHistory,
-  subscribe/notify, `reset()` for file loads.
-- Adapter interfaces: `ScoreRenderer` (mount/loadScore/dispose),
-  `ScorePlayer` (play/pause/stop/toggle/isPlaying/onStateChange),
-  `ScoreInteraction` (onScoreClicked → `ClickedPosition {barIndex, tick,
-  stringIndex}`) — the app NEVER imports alphaTab directly.
-- `AlphaTabConverter`: core Score → alphaTex string (validated by parsing our
-  output with alphaTab's own `AlphaTexImporter` in tests — the correctness oracle).
+- Core model: immutable `Score` (title/artist/tracks/bars), `Track`, `Bar`,
+  `Note` (pitch, string/fret, start/duration ticks, velocity, articulations).
+  Branded id types. Event-sourced editing via pure `Command`s +
+  `ScoreDocument` (snapshot undo/redo, subscribe, reset).
 
-### Phase 1a — Guitar tab editing (complete)
-- **Rendering**: alphaTab SVG engine, dark-theme glyph/staff colors, demo score
-  renders notation + TAB. Playback works (alphaSynth, soundfont `/soundfont/sonivox.sf3`).
-- **Editing session**: `useEditor` hook owns caret + keymap; document autosaves
-  to IndexedDB (600ms debounce) and restores on reload.
-- **Entry model** (guitarist workflow, all verified in real browser):
-  - Digits 0-9 place/replace fret at caret (pitch = open-string midi + fret);
-    creating a new beat auto-advances to next eighth-note step (fast riff entry);
-    adding to a beat that already has notes (chord tone) keeps the position.
-  - ↑/↓ change string; right after a placement they RETURN to the placed tick
-    (`lastPlacedRef`) so chords build as `3 ↓ 3 ↓ 0`. ←/→ move by grid step
-    (wrap across bars) and clear lastPlaced.
-  - Backspace deletes note at caret or steps left. Ctrl+Z / Ctrl+Shift+Z /
-    Ctrl+Y = undo/redo. Space = play/pause.
-- **Click-to-position**: `AlphaTabRenderer.positionAt(clientX, clientY)` does
-  full hit-testing via `boundsLookup` → nearest staff system/master bar/beat,
-  and resolves the exact TAB string line under the cursor (line geometry:
-  lines centered in tab staff realBounds, spacing = `engravingSettings.
-  oneStaffSpace * display.scale`; tab staff = last BarBounds sorted by y).
-  Clicking notation area moves bar/tick, keeps current string.
-- **Caret overlay**: blue box over current master bar via `getBarRect`.
-- Status bar: bar/string/step readout, keymap hint, string pills (E4 B3 G3 D3 A2 E2).
+### Phase 1a — Guitar tab editing (complete, NEW ENGINE)
+- **Rendering (stdBd engine)**: single-track scores render aligned notation +
+  TAB staves. Bravura glyphs (clef, time sig, noteheads, rests, accidentals,
+  key sigs), JetBrains Mono for TAB fret numbers + bar numbers, proportional
+  beat spacing (sqrt-duration), slanted beams (eighth runs beamed per quarter,
+  direction follows pitch, secondary beams for 16ths/32nds), title/artist/
+  tempo header, bar numbers at system starts, final double barline.
+- **Playback (WebAudio v1)**: Karplus-Strong plucked-string synth with
+  articulation awareness (palmMute → short+dark, letRing → long, ghost →
+  quiet), chord strum stagger (~11 ms, low strings first), ±5 cent detune,
+  velocity→gain curve, master compressor + generated-impulse reverb send.
+  Playhead (glowing line) + auto-scroll while playing; resumes from pause
+  offset; restarts from caret after stop.
+- **Interaction**: `positionAt(clientX, clientY)` → `{barIndex, tick,
+  stringIndex}` from pure layout geometry (exact TAB string under cursor).
+  `pointFor(...)` inverse for tests. Engine-drawn caret (thin accent line +
+  string dot) and playhead overlays.
+- **Editing session**: `useEditor` owns caret + window-level keymap (digits
+  place frets, ↑/↓ string moves with chord-return, ←/→ grid steps, Backspace,
+  Ctrl+Z/Y). Document autosaves to IndexedDB (600ms debounce), restores on
+  reload. Bar highlight replaced by the engine caret.
 
-## 6. Critical gotchas (learned the hard way — do not re-learn)
+## 5b. Engine architecture notes (for future work)
 
-1. **alphaTex syntax (v1.8)**: time signature is `\ts(4 4)` (NOT `\time 4/4` —
-   parser rejects it). No `.` metadata separator needed. Durations `:1 :2 :4 :8
-   :16 :32` before notes; rests `:4 r`; chords `:4 (0.1 3.2)`; bar separator `|`.
-   Validate with `AlphaTexImporter` (in Node, no DOM needed) — see
-   `packages/render/test/alpha-tex-import.test.ts`.
-2. **String numbering is mirrored**: alphaTex note suffix `fret.string` counts
-   1-based from the TOP line (high E = 1). alphaTab MODEL `Note.string` counts
-   1-based from the LOWEST (high E = 6). Core model is 0-based highest-first.
-   Conversions: tex = core.string + 1; clicked model string s → core visual
-   index = stringCount − s.
-3. **Tick resolutions differ**: alphaTab = 960 ticks/quarter, core = 480 →
-   divide by 2 (`ALPHATAB_TICKS_PER_QUARTER` in the adapter).
-4. **Asset paths under Vite**: alphaTab's default fontDirectory resolves
-   relative to the bundled script and breaks → set `core.fontDirectory: "/font/"`.
-   Soundfont must be the exact file `/soundfont/sonivox.sf3` (directory URL
-   gets the SPA fallback → "not a valid Soundfont2 file"). Fonts/soundfont are
-   copied into `apps/web/public/` by the alphatab-vite plugin (gitignored).
-5. **Dark theme**: set `display.resources` colors (mainGlyphColor etc.) in
-   alphaTab settings — default is black-on-transparent, invisible on dark UI.
-6. **alphaTab API quirks**: player is lazy (`api.player` may be null until
-   ready — re-attach `stateChanged` forwarding on loadScore too);
-   `beat.displayStart` is the bar-relative tick (use for hit-testing);
-   `beat.voice.bar.index` = master bar index for single-track scores.
-7. **Keyboard focus**: editing keys are handled at `window` level (guard:
-   `isTextEntryTarget`) — do NOT rely on focus on the score div (alphaTab
-   surface steals it). React `onKeyDown` was removed deliberately.
-8. **Windows quirks**: corepack and chromium-headless-shell spawn fail
+- Layout is a pure function: `computeLayout(score, {width})` →
+  `LayoutDocument` (systems → bars → per-track `TrackBar` with `Beat[]`).
+  Beat `x` is absolute SVG px; every drawing + hit-test call derives from it.
+- All engraving colors come from `engravingTheme` (theme.ts), which reads
+  `@stdbd/ui` tokens — never hardcode colors in the engraver.
+- Coordinate spaces: SVG space (layout coords) vs client coords. The engine
+  translates via `staticSvg.getBoundingClientRect()`.
+- Overlays (caret/playhead) live in a separate overlay SVG layered above the
+  static score SVG — re-rendered cheaply, pointer-events: none.
+- Beam groups: consecutive equal-duration notes ≤ eighth within the same
+  quarter beat; stems up when the group's average staff position is below the
+  middle line, down otherwise.
+
+## 6. Critical gotchas (do not re-learn)
+
+1. **Engine lives behind adapter contracts** — `ScoreRenderer` /
+   `ScorePlayer` / `ScoreInteraction` in `packages/render/src/renderer.ts`.
+   The app must never import `packages/render/src/engine/*` files directly;
+   go through `@stdbd/render`'s public API (`StdbdEngine`).
+2. **SMuFL glyph alignment**: music glyphs are drawn at font-size = staff
+   height (4 × staffSpace); text-anchor `middle` centers them. Time sig
+   digits' baselines sit on staff lines 2/4 (numerator/denominator).
+   TAB numbers need `+4.8px` baseline offset at font-size 13.5.
+3. **Guitar pitch convention**: notation staff positions are computed from
+   the WRITTEN pitch (sounding + 12 for guitar). `staffPos(midi, isGuitar)`
+   returns half-steps above the middle line (positive = higher).
+4. **Font loading**: SVG text metrics shift after fonts load → the engine
+   re-renders once on `document.fonts.ready`. Bravura is preloaded via
+   `<link rel="preload">` to avoid FOUT.
+5. **Windows quirks**: corepack and chromium-headless-shell spawn fail
    ("spawn UNKNOWN") → pnpm via npm -g, Playwright via `channel: "msedge"`.
-   After `pnpm install` you may need `pnpm approve-builds esbuild` once.
-   In PowerShell, prefer `pnpm run dev` if plain `pnpm dev` is intercepted by
-   the user's shell profile (one unresolved environment oddity).
-9. **Debug hook**: `window.__stdbRenderer` exposes the AlphaTabRenderer in the
-   browser (used by scripts and future E2E).
-10. Tests use non-null assertions freely (`**/test/**` eslint override);
-    production code must not.
+   In PowerShell, prefer `pnpm run dev` over plain `pnpm dev`.
+   For long-running dev servers from scripts, use `Start-Process` (jobs die
+   with the parent shell).
+6. **Debug hook**: `window.__stdbRenderer` exposes the StdbdEngine
+   (`positionAt`, `pointFor`, `getBarRect`) — used by scripts and E2E.
+7. Tests use non-null assertions freely (`**/test/**` eslint override);
+   production code must not.
 
 ## 7. Verification status (last run: all green)
 
-- lint / typecheck / 34 unit tests / production build
-- Browser-verified via `scripts/interact-test.mjs`:
+- lint / typecheck / 23 unit tests / production build
+- Browser-verified via `scripts/interact-test.mjs` (real Edge):
   - click on TAB number → `Bar 1 · String 1 · Step 1` ✓
   - click empty A2 line → `Bar 1 · String 5 · Step 3` ✓
   - chord tones stay on the beat ✓ (`chordTonesStayed: true`)
-  - new note on empty beat auto-advances ✓ (`createAdvanced: true`)
   - ↓ after placement returns to placed tick ✓ (`downReturned: true`)
-- No page errors; only console noise is the missing favicon (cosmetic TODO).
+  - new note on empty beat auto-advances ✓ (`createAdvanced: true`)
+- No page errors; favicon served inline.
 
 ## 8. Known gaps / next steps (in order)
 
-1. **Incremental rendering (Phase 1c, top priority)**: every edit re-sends the
-   full score through `api.tex()` → re-parse/re-render flash. Move to direct
-   alphaTab model updates or model-level editing so edits feel instant. This is
-   THE premium-feel blocker.
-2. **Caret UX**: replace bar-highlight box with a thin caret line + string hover
-   feedback + selection model.
+1. **Incremental re-render (top priority)**: currently every edit recomputes
+   the full layout + SVG string. Fast, but a bar-local layout cache (dirty
+   bar → re-render that bar's group only) makes it feel even snappier for
+   long scores.
+2. **Articulation rendering**: palm-mute (PM), bends, slides, vibrato,
+   harmonics — the data model has them; the engraver doesn't draw them yet.
 3. **Bar management**: add/remove/duplicate bars (completes Phase 1a).
-4. **Durations**: fixed eighth grid; add note-value selection (1/4, 1/2, dots,
-   triplets) — converter `durationName()` already maps ticks.
-5. Phase 1b: notation-only view toggle, articulations, GP/MusicXML/MIDI import,
-   PDF/MusicXML/MIDI export.
-6. Phase 1c prototype (timebox 2 weeks): drag-note pitch/duration + hum-a-correction
-   input (monophonic pitch detection, WASM). Pivot to click/drag-only if feel fails.
-7. Phase 2: accounts/sync/billing, practice tools (loop, tempo %, metronome, tuner).
-8. Phase 3+: AI (chord-chart autopilot first), live session (latency architecture
-   is specified in docs/ARCHITECTURE.md), arranger, per docs/ROADMAP.md.
-9. Minor: favicon; fix weak `undoChord` assertion in interact-test.mjs; mixer UI
-   (Track model already has volume/pan/mute/solo).
-10. Naming: decide (Adnoto leads), then domain/trademark check + favicon/branding.
+4. **Durations**: fixed eighth grid; add note-value selection (1/4, 1/2,
+   dots, triplets) — `durationClass()` already maps ticks.
+5. Phase 1b: notation-only view toggle (engine renders one staff), GP/
+   MusicXML/MIDI import, PDF/MusicXML/MIDI export.
+6. Phase 1c prototype (timebox 2 weeks): drag-note pitch/duration +
+   hum-a-correction input (monophonic pitch detection, WASM).
+7. Playback v2: per-track mixer (Track model already has volume/pan/mute/
+   solo), better synth voices per instrument family.
+8. Phase 2+: accounts/sync/billing, practice tools, AI (chord-chart
+   autopilot first), live session (latency architecture in
+   docs/ARCHITECTURE.md), arranger — per docs/ROADMAP.md.
+9. Naming: decide (Adnoto leads), then domain/trademark check + branding.
 
 ## 9. Decisions already made (do not relitigate without reason)
 
-- Own immutable score model + event-sourced commands; MusicXML compatibility via
-  adapters (not MusicXML as internal format).
-- alphaTab behind adapters; alphaTex as the renderer interchange (validated by
-  importer round-trip tests).
+- Own immutable score model + event-sourced commands; MusicXML compatibility
+  via adapters (not MusicXML as internal format).
+- **In-house engraving engine** (ADR-003) — do not reintroduce alphaTab or
+  any third-party score renderer without revisiting that ADR.
 - Web-first (TS/React), desktop/iPad shells later (Tauri likely).
-- Window-level keyboard handling; premium = consistency + motion + zero-latency
-  feedback, enforced via design tokens (`packages/ui`).
-- Monetization: freemium subscription; chord-chart autopilot = first AI paywall;
-  client-side WASM inference preferred (cost + privacy).
-- Solo-dev rules: ship usable every ~2 weeks, build in public from first usable
-  milestone, prototype risky UX before deep investment.
+- Window-level keyboard handling; premium = consistency + motion +
+  zero-latency feedback, enforced via design tokens (`packages/ui`).
+- Monetization: freemium subscription; chord-chart autopilot = first AI
+  paywall; client-side WASM inference preferred (cost + privacy).
+- Solo-dev rules: ship usable every ~2 weeks, build in public from first
+  usable milestone, prototype risky UX before deep investment.

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import type { AlphaTabRenderer } from "@stdbd/render";
+import type { StdbdEngine } from "@stdbd/render";
 
 interface TransportBarProps {
-  renderer: AlphaTabRenderer | null;
+  renderer: StdbdEngine | null;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;

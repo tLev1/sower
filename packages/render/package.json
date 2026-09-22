@@ -13,14 +13,11 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@coderline/alphatab": "~1.8.4",
-    "@stdbd/core": "workspace:*"
+    "@stdbd/core": "workspace:*",
+    "@stdbd/ui": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.9.0",
     "vitest": "^3.0.0"
   }
 }
-
-
-

@@ -11,14 +11,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@coderline/alphatab": "~1.8.4",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@stdbd/audio": "workspace:*",
     "@stdbd/core": "workspace:*",
     "@stdbd/render": "workspace:*",
     "@stdbd/ui": "workspace:*"
   },
   "devDependencies": {
-    "@coderline/alphatab-vite": "~1.8.4",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.0.0",
@@ -30,5 +30,3 @@
   },
   "dependenciesNotes": "alphaTab Vite plugin handles Bravura font + soundfont assets and worker bundling"
 }
-
-

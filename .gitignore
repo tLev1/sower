@@ -9,7 +9,3 @@ coverage/
 .env.*
 !.env.example
 .vite/
-
-# alphaTab assets (copied by @coderline/alphatab-vite)
-apps/web/public/font/
-apps/web/public/soundfont/

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ScoreDocument } from "@stdbd/core";
-import type { AlphaTabRenderer, ClickedPosition } from "@stdbd/render";
+import type { StdbdEngine } from "@stdbd/render";
+import type { ClickedPosition } from "@stdbd/render";
 import {
   GRID_TICKS,
   capacityOf,
@@ -17,7 +18,7 @@ export type EditResult = "applied" | "clamped" | "ignored";
 
 interface UseEditorArgs {
   document: ScoreDocument;
-  renderer: AlphaTabRenderer | null;
+  renderer: StdbdEngine | null;
 }
 
 /** Minimal structural key event — satisfied by both DOM and React events. */
