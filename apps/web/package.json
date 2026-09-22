@@ -1,0 +1,34 @@
+{
+  "name": "@stdbd/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@coderline/alphatab": "~1.8.4",
+    "@stdbd/audio": "workspace:*",
+    "@stdbd/core": "workspace:*",
+    "@stdbd/render": "workspace:*",
+    "@stdbd/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "@coderline/alphatab-vite": "~1.8.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "~5.9.0",
+    "vite": "^8.3.0",
+    "vitest": "^3.0.0"
+  },
+  "dependenciesNotes": "alphaTab Vite plugin handles Bravura font + soundfont assets and worker bundling"
+}
+
+
