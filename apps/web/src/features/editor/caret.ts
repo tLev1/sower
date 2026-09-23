@@ -11,6 +11,54 @@ export const GRID_TICKS = TICKS_PER_QUARTER / 2;
 /** Highest fret the editor accepts (24-fret guitars). */
 export const MAX_FRET = 24;
 
+/** Note values available as the persistent entry duration (Guitar-Pro style). */
+export type DurationValue = "whole" | "half" | "quarter" | "eighth" | "16th" | "32nd";
+
+/** Duration values in entry-palette order (longest first). */
+export const DURATION_VALUES: readonly DurationValue[] = [
+  "whole",
+  "half",
+  "quarter",
+  "eighth",
+  "16th",
+  "32nd",
+];
+
+const DURATION_QUARTERS: Record<DurationValue, number> = {
+  whole: 4,
+  half: 2,
+  quarter: 1,
+  eighth: 1 / 2,
+  "16th": 1 / 4,
+  "32nd": 1 / 8,
+};
+
+/** Ticks of a note value (optionally dotted) at the model's 480-per-quarter resolution. */
+export function durationTicks(value: DurationValue, dotted: boolean): number {
+  return Math.round(TICKS_PER_QUARTER * DURATION_QUARTERS[value] * (dotted ? 1.5 : 1));
+}
+
+/** Nearest note value for a tick duration (dotted values round to their base). */
+export function durationValueOfTicks(ticks: number): DurationValue {
+  const quarters = ticks / TICKS_PER_QUARTER;
+  if (quarters >= 3) return "whole"; // 4 or 6 (dotted half)
+  if (quarters >= 1.5) return "half"; // 2 or 3 (dotted quarter)
+  if (quarters >= 0.75) return "quarter"; // 1 or 1.5 (dotted eighth)
+  if (quarters >= 0.375) return "eighth";
+  if (quarters >= 0.1875) return "16th";
+  return "32nd";
+}
+
+/** True when the tick duration is dotted (1.5× its base value). */
+export function durationIsDotted(ticks: number): boolean {
+  return Math.abs(ticks - durationTicks(durationValueOfTicks(ticks), false)) > 0.01;
+}
+
+export interface DurationChoice {
+  readonly value: DurationValue;
+  readonly dotted: boolean;
+}
+
 export interface Caret {
   readonly barIndex: number;
   readonly stringIndex: number;

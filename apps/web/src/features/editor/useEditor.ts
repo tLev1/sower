@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ScoreDocument } from "@stdbd/core";
+import { TICKS_PER_QUARTER, tempoMarkAt } from "@stdbd/core";
 import type { StdbdEngine } from "@stdbd/render";
 import type { ClickedPosition } from "@stdbd/render";
 import {
@@ -7,12 +8,15 @@ import {
   MAX_FRET,
   capacityOf,
   createCaret,
+  durationTicks,
   moveCaretHorizontally,
   moveCaretVertically,
   noteAt,
   openStringPitch,
   stringCount,
   type Caret,
+  type DurationChoice,
+  type DurationValue,
 } from "./caret";
 
 export type EditResult = "applied" | "clamped" | "ignored";
@@ -47,15 +51,19 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
  * Keyboard handling is window-level: the editor responds immediately,
  * without needing focus on the score canvas (pro-app behavior).
  * Entry model (guitarist workflow):
- *  - digits 0-9 place/replace the fret on the current string
+ *  - digits 0-9 place/replace the fret on the current string, using the
+ *    selected entry duration (a note-value palette controls it; the choice
+ *    persists until changed — Guitar-Pro style entry)
  *    - creating a new beat auto-advances to the next grid step (fast riff entry)
- *    - adding to an existing beat (chord tone) keeps the position
+ *    - adding to an existing beat (chord tone) keeps the position and
+ *      inherits the beat's duration
  *  - ↑/↓ move across strings; right after a placement they return to the
  *    placed tick so chords build naturally: 3 ↓ 3 ↓ 0
  *  - arrows ←/→ navigate the grid, Backspace deletes, Ctrl+Z/Y history
  *  - Space toggles playback
  * Mouse: clicking anywhere on the tab staff positions the caret on that
- * string and grid step.
+ * string and grid step. Right-click / long-press opens the score context
+ * menu (tempo / meter / measure actions at that measure).
  */
 export function useEditor({ document: doc, renderer }: UseEditorArgs) {
   const [version, setVersion] = useState(0);
@@ -70,6 +78,13 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
   /** Tens digit of an in-progress two-digit fret entry (Ctrl+1/2 → 10-24). */
   const [pendingFret, setPendingFret] = useState<number | null>(null);
   const pendingFretRef = useRef<number | null>(null);
+  /** Persistent note-value entry mode: every placed note uses it until changed. */
+  const [entryDuration, setEntryDurationState] = useState<DurationChoice>({
+    value: "eighth",
+    dotted: false,
+  });
+  const entryDurationRef = useRef(entryDuration);
+  entryDurationRef.current = entryDuration;
 
   useEffect(() => doc.subscribe(() => { setVersion((v) => v + 1); }), [doc]);
 
@@ -92,7 +107,18 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
 
       const existing = noteAt(s, c);
       const pitch = openStringPitch(s, c.stringIndex) + fret;
-      const beatExists = bar.voices[0]?.notes.some((n) => n.start === c.tick) ?? false;
+      const beatNote = existing ??
+        bar.voices[0]?.notes.find((n) => n.start === c.tick) ?? null;
+      const capacity = capacityOf(s, c.barIndex);
+      const chosen = entryDurationRef.current;
+      // new notes use the persistent entry duration (clamped to the bar);
+      // chord tones added to an existing beat inherit the beat's duration
+      const duration = existing
+        ? existing.duration
+        : Math.max(GRID_TICKS / 2, Math.min(
+            beatNote ? beatNote.duration : durationTicks(chosen.value, chosen.dotted),
+            capacity - c.tick,
+          ));
 
       if (existing) {
         if (existing.fret === fret) return "clamped";
@@ -112,16 +138,40 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
           note: {
             pitch,
             start: c.tick,
-            duration: GRID_TICKS,
+            duration,
             string: c.stringIndex,
             fret,
           },
         });
       }
       lastPlacedRef.current = { tick: c.tick, stringIndex: c.stringIndex };
-      // riff entry: a newly created beat auto-advances; chord tones stay
-      setCaret(beatExists ? c : moveCaretHorizontally(s, c, 1));
+      // riff entry: a newly created beat auto-advances by its length; chord tones stay
+      setCaret(beatNote ? c : moveCaretHorizontally(s, c, Math.max(1, Math.round(duration / GRID_TICKS))));
       return "applied";
+    },
+    [doc, execute],
+  );
+
+  /**
+   * Selects the persistent entry duration. When the caret sits on a note,
+   * that note's duration is updated too (Guitar-Pro behavior).
+   */
+  const setEntryDuration = useCallback(
+    (value: DurationValue, dotted: boolean): void => {
+      setEntryDurationState({ value, dotted });
+      const s = doc.score;
+      const c = caretRef.current;
+      const existing = noteAt(s, c);
+      const bar = s.bars[c.barIndex];
+      const track = s.tracks[0];
+      if (!existing || !bar || !track) return;
+      execute({
+        type: "setNoteDuration",
+        trackId: track.id,
+        barId: bar.id,
+        noteId: existing.id,
+        duration: durationTicks(value, dotted),
+      });
     },
     [doc, execute],
   );
@@ -181,19 +231,57 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     return "applied";
   }, [doc, execute]);
 
-  const setTempo = useCallback((bpm: number): void => {
-    const s = doc.score;
-    const bar = s.bars[caretRef.current.barIndex];
+  /** Inserts an empty measure right after `barIndex` (inheriting its meter). */
+  const insertBarAfter = useCallback((barIndex: number): void => {
+    const bar = doc.score.bars[barIndex];
     if (!bar) return;
-    execute({ type: "setBarTempo", barId: bar.id, tempo: bpm });
+    execute({ type: "addBar", afterBarId: bar.id });
   }, [doc, execute]);
 
-  const setTimeSignature = useCallback((numerator: number, denominator: number): void => {
+  /** Deletes the given measure (refuses to empty the score). */
+  const removeBarAt = useCallback((barIndex: number): boolean => {
     const s = doc.score;
-    const bar = s.bars[caretRef.current.barIndex];
+    const bar = s.bars[barIndex];
+    if (!bar || s.bars.length <= 1) return false;
+    execute({ type: "removeBar", barId: bar.id });
+    return true;
+  }, [doc, execute]);
+
+  /** Sets a tempo marker at an exact measure (notated beat unit included). */
+  const setTempoAtBar = useCallback((barIndex: number, bpm: number, unitTicks?: number | null): void => {
+    const bar = doc.score.bars[barIndex];
+    if (!bar) return;
+    if (unitTicks === undefined) {
+      execute({ type: "setBarTempo", barId: bar.id, tempo: bpm });
+    } else {
+      execute({ type: "setBarTempo", barId: bar.id, tempo: bpm, unitTicks });
+    }
+  }, [doc, execute]);
+
+  /** Removes the tempo marker at a measure (the previous one carries again). */
+  const removeTempoAtBar = useCallback((barIndex: number): void => {
+    const bar = doc.score.bars[barIndex];
+    if (!bar || bar.tempo === null) return;
+    execute({ type: "setBarTempo", barId: bar.id, tempo: null });
+  }, [doc, execute]);
+
+  /** Changes the time signature from measure `barIndex` onward. */
+  const setTimeSignatureAtBar = useCallback((barIndex: number, numerator: number, denominator: number): void => {
+    const bar = doc.score.bars[barIndex];
     if (!bar) return;
     execute({ type: "setTimeSignature", barId: bar.id, numerator, denominator });
   }, [doc, execute]);
+
+  const setTempo = useCallback((bpm: number, unitTicks?: number | null): void => {
+    const s = doc.score;
+    const barIndex = Math.max(0, Math.min(caretRef.current.barIndex, s.bars.length - 1));
+    const unit = unitTicks ?? tempoMarkAt(s, barIndex)?.unitTicks ?? TICKS_PER_QUARTER;
+    setTempoAtBar(barIndex, bpm, unit);
+  }, [doc, setTempoAtBar]);
+
+  const setTimeSignature = useCallback((numerator: number, denominator: number): void => {
+    setTimeSignatureAtBar(caretRef.current.barIndex, numerator, denominator);
+  }, [setTimeSignatureAtBar]);
 
   const removeLastBar = useCallback((): EditResult => {
     const s = doc.score;
@@ -352,17 +440,24 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     caret,
     caretInfo,
     pendingFret,
+    entryDuration,
     container,
     setContainer,
     placeFret,
+    setEntryDuration,
     deleteAtCaret,
     navigate,
     undo,
     redo,
     appendBar,
+    insertBarAfter,
+    removeBarAt,
     removeLastBar,
     setTempo,
+    setTempoAtBar,
+    removeTempoAtBar,
     setTimeSignature,
+    setTimeSignatureAtBar,
     handleKeyDown,
   };
 }

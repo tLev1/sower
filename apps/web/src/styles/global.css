@@ -310,3 +310,340 @@ body {
   background: var(--accent);
   color: #fff;
 }
+
+/* ---------- entry note-value palette ---------- */
+
+.duration-picker {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.duration-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-family: "Bravura";
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 120ms var(--ease-out),
+    color 120ms var(--ease-out);
+}
+
+.duration-btn,
+.glyph-btn,
+.sheet-menu-glyph,
+.glyph-preview,
+.field-icon {
+  /* Bravura's vertical metrics are ~2.4em — clamp the line box so buttons
+     and labels keep their intended heights */
+  line-height: 1;
+}
+
+.duration-btn:hover {
+  color: var(--text);
+  background: rgba(79, 140, 255, 0.1);
+}
+
+.duration-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.duration-btn.dot {
+  margin-left: 4px;
+  border-left: 1px solid var(--border);
+  border-radius: 0 5px 5px 0;
+  padding-left: 6px;
+}
+
+/* ---------- sheet context menu / popovers ---------- */
+
+.sheet-menu,
+.sheet-popover {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 6px;
+  animation: sheet-pop-in 120ms var(--ease-out);
+}
+
+@keyframes sheet-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.sheet-menu-title,
+.sheet-popover-title {
+  padding: 6px 10px 8px;
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.sheet-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms var(--ease-out);
+}
+
+.sheet-menu-item:hover:not(:disabled) {
+  background: rgba(79, 140, 255, 0.12);
+}
+
+.sheet-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sheet-menu-glyph {
+  font-family: "Bravura";
+  font-size: 14px;
+  color: var(--text-muted);
+  width: 18px;
+  text-align: center;
+}
+
+.sheet-menu-sep {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--border);
+}
+
+.sheet-popover {
+  width: max-content;
+  max-width: min(320px, calc(100vw - 20px));
+  padding: 10px;
+}
+
+/* tempo editor */
+
+.tempo-units {
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  margin-bottom: 10px;
+}
+
+.glyph-btn {
+  min-width: 34px;
+  height: 32px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-family: "Bravura";
+  font-size: 19px;
+  cursor: pointer;
+  transition:
+    background 120ms var(--ease-out),
+    color 120ms var(--ease-out);
+}
+
+.glyph-btn:hover {
+  color: var(--text);
+  background: rgba(79, 140, 255, 0.1);
+}
+
+.glyph-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.glyph-btn.dot {
+  margin-left: 4px;
+  border-left: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.tempo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.glyph-preview {
+  font-family: "Bravura";
+  font-size: 21px;
+  color: var(--text);
+  min-width: 30px;
+  text-align: center;
+}
+
+.tempo-eq {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.sheet-popover-input,
+.sheet-popover-select {
+  height: 30px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", Consolas, monospace;
+  text-align: center;
+  outline: none;
+}
+
+.sheet-popover-input {
+  width: 62px;
+  -moz-appearance: textfield;
+}
+
+.sheet-popover-input::-webkit-outer-spin-button,
+.sheet-popover-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sheet-popover-input:focus,
+.sheet-popover-select:focus {
+  border-color: var(--accent);
+}
+
+.sheet-popover-select {
+  width: 56px;
+  cursor: pointer;
+}
+
+.sheet-popover-select option {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+.sheet-popover-unit {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.sheet-popover-secondary {
+  margin-top: 10px;
+  width: 100%;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    color 120ms var(--ease-out),
+    border-color 120ms var(--ease-out);
+}
+
+.sheet-popover-secondary:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* time signature editor */
+
+.timesig-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.meter-chip {
+  height: 30px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", Consolas, monospace;
+  cursor: pointer;
+  transition:
+    border-color 120ms var(--ease-out),
+    background 120ms var(--ease-out);
+}
+
+.meter-chip:hover {
+  border-color: var(--accent);
+}
+
+.meter-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.timesig-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timesig-slash {
+  color: var(--text-muted);
+}
+
+.sheet-popover-apply {
+  height: 30px;
+  padding: 0 12px;
+  background: var(--accent);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms var(--ease-out);
+}
+
+.sheet-popover-apply:hover {
+  background: var(--accent-hover);
+}
+
+/* clickable marks on the sheet */
+
+.stdb-score-overlay .stdb-marker-hit {
+  cursor: pointer;
+}

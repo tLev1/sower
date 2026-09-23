@@ -36,7 +36,7 @@ Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
 | Rendering | **stdBd engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
 | Playback | WebAudio Karplus-Strong synth (v1) | articulation-aware; sample engines plug in via SynthEngine seam later |
 | Fonts | Bravura (public/fonts), Inter Variable + JetBrains Mono Variable (fontsource) | music glyphs + UI/mono type |
-| Tests | Vitest 3 | 46 tests green (23 core + 13 render + 10 web) |
+| Tests | Vitest 3 | 50 tests green (27 core + 13 render + 10 web) |
 | Lint | ESLint flat config, typescript-eslint strictTypeChecked | `any` is an error; `scripts/` ignored |
 | CI | `.github/workflows/ci.yml` | lint → typecheck → test → build |
 | E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** — always launch Edge |
@@ -47,30 +47,39 @@ Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
 C:\dev\stdBd
 ├── apps/web/                  React app (composition only)
 │   └── src/
-│       ├── App.tsx            wires document + engine + editor + transport
-│       ├── features/editor/   caret.ts (pure nav logic + tests),
-│       │                      useEditor.ts (state + keymap + click handling),
-│       │                      ScoreEditor.tsx (canvas + status bar)
-│       ├── features/playback/TransportBar.tsx
+│       ├── App.tsx            wires document + engine + editor + transport;
+│       │                      prewarms audio on the first user gesture
+│       ├── features/editor/   caret.ts (pure nav logic + duration helpers +
+│       │                      tests), useEditor.ts (state + keymap + click
+│       │                      handling + entry duration + measure ops),
+│       │                      ScoreEditor.tsx (canvas + status bar),
+│       │                      DurationPicker.tsx, SheetMenu.tsx (context
+│       │                      menu + tempo/meter popovers)
+│       ├── features/playback/TransportBar.tsx (unit-aware tempo display)
 │       ├── services/score-store.ts   IndexedDB load/save + debounced autosave
 │       ├── demo/demoScore.ts  2-bar Em pentatonic demo (initial document)
 │       └── styles/global.css  dark theme, tokens as CSS vars, Bravura @font-face
 ├── packages/core/             PURE domain — zero dependencies
 │   └── src/
-│       ├── model/score.ts     Score/Track/Bar/Voice/Note, branded ids, 480 tpq
+│       ├── model/score.ts     Score/Track/Bar/Voice/Note, branded ids, 480 tpq,
+│       │                      Bar.tempoUnit (notated beat unit)
 │       ├── commands/          commands.ts (pure applyCommand), score-document.ts
-│       └── operations/        tempoAtBar, barStartTime, validateBar, id allocator
+│       └── operations/        tempoMarkAt/quarterBpmOf/tempoAtBar, barStartTime,
+│                              validateBar, id allocator
 ├── packages/render/           ScoreRenderer + ScorePlayer + ScoreInteraction
 │   └── src/engine/            THE ENGINE (in-house, since ADR-003):
 │       ├── layout.ts          pure Score → geometry (systems/bars/beats,
 │       │                      hit-testing, caret/playhead anchors) — tested
 │       ├── engraving.ts       layout → inline SVG (Bravura glyphs, TAB staff,
-│       │                      beams, rests, header)
+│       │                      beams, rests, header, metronome tempo marks)
+│       │                      + markerHitAreas for the editable marks
 │       ├── engine.ts          StdbdEngine: mount/load/positionAt/setCaret/
-│       │                      setPlayhead/onPositionChanged/dispose
-│       ├── player.ts          WebAudioPlayer (Karplus-Strong, tempo map,
-│       │                      lookahead scheduler, articulations)
-│       ├── smufl.ts           SMuFL codepoints (Bravura)
+│       │                      setPlayhead/onPositionChanged/prewarm,
+│       │                      sheet-marker clicks, context menu (right-click
+│       │                      + touch long-press), dispose
+│       ├── player.ts          WebAudioPlayer (Karplus-Strong, tempo map with
+│       │                      beat units, lookahead scheduler, prewarm)
+│       ├── smufl.ts           SMuFL codepoints (Bravura, incl. metronome marks)
 │       └── theme.ts           engraving colors from @stdbd/ui tokens
 ├── packages/audio/            SynthEngine + LatencyProbe contracts (no impl yet)
 ├── packages/ui/               design tokens (colors/motion/spacing + liveInput budgets)
@@ -78,6 +87,9 @@ C:\dev\stdBd
 │   ├── inspect-page.mjs       dev page in headless Edge: console errors, DOM, screenshot
 │   ├── interact-test.mjs      E2E regression: click precision, chord flow, entry model
 │   ├── probe-transport.mjs    play-from-selection + tempo/meter edit verification
+│   ├── probe-sheet-v2.mjs     instant-play latency, sheet popovers, context menu,
+│   │                          duration palette (the 2026-09 batch)
+│   ├── visual-v2.mjs          screenshots: tempo popover, 7/8 sheet, context menu
 │   ├── probe-sync.mjs         playhead continuity sampling (frozen-frame / jump detector)
 │   ├── probe-buttons.mjs      measure +/− controls (real mouse clicks)
 │   ├── probe-frets.mjs        two-digit fret entry + ledger overhang verification
@@ -99,6 +111,7 @@ pnpm test                # Vitest, all packages (46 tests)
 pnpm build               # typecheck + vite build
 node scripts/inspect-page.mjs     # with dev server running; screenshot → C:\dev\temp\opencode\page.png
 node scripts/interact-test.mjs    # interaction regression (uses real mouse/keys)
+node scripts/probe-sheet-v2.mjs   # instant-play latency + sheet editing batch (15 checks)
 ```
 
 Git repo on `main`; commit as you go (conventional commits).
@@ -150,19 +163,50 @@ Git repo on `main`; commit as you go (conventional commits).
   high-fret notes (fret 15+ writes 3+ ledger lines) never collide with the
   header or the neighboring system.
 - **Transport editing**: the transport bar has an editable BPM field
-  (commit on Enter/blur → `setBarTempo`, clamped 20-400) and a meter
-  selector (`setTimeSignature`, applied from the caret bar onward per
-  notation convention; one undo entry per committed change, not per
-  keystroke). The transport shows the EFFECTIVE tempo at the caret bar
-  (`tempoAtBar`); the engraver draws tempo marks above the staff on any bar
-  carrying a marker. Notes overflowing a narrowed meter stay in the model
-  but are ignored by layout/playback overflow handling (known v1 limit).
+  (commit on Enter/blur → `setBarTempo`, clamped 20-400, keeping the current
+  beat unit) and a meter selector (`setTimeSignature`, applied from the caret
+  bar onward per notation convention; one undo entry per committed change, not
+  per keystroke). The transport shows the EFFECTIVE notated tempo at the caret
+  bar (`tempoMarkAt` — BPM + unit glyph). Notes overflowing a narrowed meter
+  stay in the model but are ignored by layout/playback overflow handling
+  (known v1 limit).
+- **Tempo beat units (notation-accurate)**: `Bar.tempoUnit` stores the ticks
+  of the notated beat unit (240 = ♪, 360 = ♪., 480 = ♩, 720 = ♩., up to
+  3840) — any standard value 32nd→whole with an optional single augmentation
+  dot. Playback converts to quarter-BPM (`quarterBpmOf`); the sheet and the
+  transport draw the unit via Bravura metronome-mark glyphs (U+ECA2–ECB7).
+  Legacy saved scores (no `tempoUnit`) play as quarter BPM — no migration.
+- **Sheet-anchored editing**: the engraved time-signature block and every
+  tempo equation are clickable (transparent hit rects in the overlay,
+  `markerHitAreas` mirrors the engraving geometry) → popovers anchored at the
+  click: tempo (beat-unit palette + dotted toggle + BPM input, "Remove tempo
+  mark" when a marker exists) and meter (17 preset chips + custom n/d, applied
+  from that measure onward). Right-click anywhere on the sheet (desktop) or a
+  ~550 ms long-press (touch) opens the score context menu — tempo, time
+  signature, insert measure after, delete measure — all targeting the clicked
+  measure (`onContextMenu`, `onSheetMarkerClicked` on the engine).
+- **Note-value entry palette**: a persistent duration mode in the status bar
+  (whole/half/quarter/eighth/16th/32nd + dot toggle, Bravura glyphs). Every
+  placed note uses the selected value until it is changed; changing it while
+  the caret sits on a note also updates that note (`setNoteDuration`);
+  chord tones added to an existing beat inherit the beat's duration; new notes
+  clamp to the remaining bar capacity; auto-advance skips the placed value's
+  length on the eighth grid.
 - **Play-from-selection**: the player resolves the start position into
-  seconds AFTER the tempo map exists (`begin()` rebuilds the timeline
+  seconds AFTER the tempo map exists (`beginAt()` rebuilds the timeline
   first — converting earlier, with an empty tempo map, made playback start
   at bar 1). A caret change while stopped/paused clears the pause-resume
   memory, so play always starts from the fresh selection; unchanged
   caret + pause resumes from the paused spot.
+- **Instant play latency**: `prewarm()` (called on the first pointer gesture
+  anywhere, from the app and the engine) creates + resumes the AudioContext
+  and pre-generates pluck buffers in idle chunks, so nothing blocks at play
+  time. `play()` itself is synchronous when the context is already running
+  (fast path, first note scheduled within ~1 ms) and otherwise resumes the
+  context first instead of scheduling against a suspended clock. The
+  start-schedule offset dropped from 80 ms to 30 ms. Only the ~1 s of events
+  around the start position are generated synchronously; the rest streams in
+  the background so no frame stalls.
 - **Measure management**: engine-drawn "+/−" buttons after the final barline
   (SVG, hit-testable, − hidden at 1 bar); `addBar`/`removeBar` commands in
   core; the id allocator seeds from the score and re-syncs on reset (avoids
@@ -197,10 +241,17 @@ Git repo on `main`; commit as you go (conventional commits).
   the playhead per bar (old behavior) froze it at each bar's last beat and
   teleported it across the barline — that was the measure-jump glitch.
 - Sync details: all pluck buffers are pre-generated on play
-  (`primeBuffers`); the emitted position is compensated by
+  (`primeBuffers`-style: the events around the start position synchronously,
+  the rest in async chunks); the emitted position is compensated by
   `outputLatency + baseLatency` so the playhead tracks what the listener
   HEARS; pause/stop fade out via the master gain (~110 ms) instead of
   hard-cutting sources. Auto-scroll is vertical-only and smooth.
+- **Tempo with beat units**: playback converts notated marks to quarter-BPM
+  via `quarterBpmOf` (`Bar.tempo` = BPM of the unit, `Bar.tempoUnit` = unit
+  ticks; missing → quarter). The engraver draws unit glyphs + augmentation
+  dot from the metronome-marks SMuFL range; `markerHitAreas(layout)` returns
+  the editable-mark rects, and the engine renders them as transparent
+  `data-stdb-action` rects in the overlay's `.stdb-btns` group.
 
 ## 6. Critical gotchas (do not re-learn)
 
@@ -231,29 +282,42 @@ Git repo on `main`; commit as you go (conventional commits).
    editing React components, kill the node processes and restart
    `pnpm run dev` before debugging the code.
 7. **Debug hook**: `window.__stdbRenderer` exposes the StdbdEngine
-   (`positionAt`, `pointFor`, `getBarRect`) — used by scripts and E2E.
-   Measure-button clicks: the score's container pointerdown handler must
-   skip `[data-stdb-action]` targets — otherwise the caret re-render
-   destroys the button between mousedown and click and the click never
-   fires. The last system reserves ~6.6 staff spaces of tail room so the
-   buttons stay inside the overlay SVG's hit-testable area.
+   (`positionAt`, `pointFor`, `getBarRect`) and `window.__stdbDoc` the
+   ScoreDocument — used by scripts and E2E. Measure-button clicks: the
+   score's container pointerdown handler must skip `[data-stdb-action]`
+   targets — otherwise the caret re-render destroys the button between
+   mousedown and click and the click never fires. The last system reserves
+   ~6.6 staff spaces of tail room so the buttons stay inside the overlay
+   SVG's hit-testable area. Synthetic PointerEvents dispatched from JS do
+   NOT carry user activation — Playwright probes must use `page.mouse.*`
+   for anything that needs the AudioContext to resume.
 8. Tests use non-null assertions freely (`**/test/**` eslint override);
    production code must not.
+9. **Bravura vertical metrics in HTML**: music glyphs inside text spans get
+   a ~2.4em line box — global.css clamps `line-height: 1` on
+   `.duration-btn`, `.glyph-btn`, `.sheet-menu-glyph`, `.glyph-preview`,
+   `.field-icon` or buttons stretch to double height.
+10. **Headless test audio quirk**: the first AudioContext `resume()` in a
+    fresh headless Edge page takes ~600 ms; `probe-sheet-v2.mjs` does a
+    warm-up play first, mirroring real usage where `prewarm()` runs on the
+    first user gesture.
 
 ## 7. Verification status (last run: all green)
 
-- lint / typecheck / 46 unit tests / production build
+- lint / typecheck / 50 unit tests / production build
 - Browser-verified via `scripts/interact-test.mjs` (real Edge):
   - click on TAB number → `Bar 1 · String 1 · Step 1` ✓
   - click empty A2 line → `Bar 1 · String 5 · Step 3` ✓
   - chord tones stay on the beat ✓ (`chordTonesStayed: true`)
   - ↓ after placement returns to placed tick ✓ (`downReturned: true`)
   - new note on empty beat auto-advances ✓ (`createAdvanced: true`)
-- Playhead continuity probe (`probe-sync.mjs`): zero frozen frames, zero
-  jumps across bar crossings ✓
-- Play-from-selection (`probe-transport.mjs`): playhead in the selected bar
-  within 140 ms of play ✓; BPM edit → sheet header updates ✓; meter edit →
-  3/4 glyphs engraved, beams regroup in threes ✓
+- Playhead continuity probe (`probe-sync.mjs`): zero jumps across bar
+  crossings ✓
+- Play-from-selection + instant latency (`probe-sheet-v2.mjs`, 15/15):
+  first note scheduled 0.9 ms after play(), playhead in the selected bar
+  within output-latency + 150 ms; tempo mark click → ♪. = 85 commit
+  (`tempoUnit 360`); time-sig click → 7/8 engraved; right-click menu with
+  tempo/meter/insert/delete; quarter + dotted-quarter palette durations ✓
 - No page errors; favicon served inline.
 
 ## 8. Known gaps / next steps (in order)
@@ -262,25 +326,28 @@ Git repo on `main`; commit as you go (conventional commits).
    the full layout + SVG string. Fast, but a bar-local layout cache (dirty
    bar → re-render that bar's group only) makes it feel even snappier for
    long scores.
-2. **Durations**: fixed eighth grid; add note-value selection (1/4, 1/2,
-   dots, triplets) — `durationClass()` already maps ticks; the metrical beam
-   rules and secondary beams are ready for mixed values.
+2. **Triplets / tuplet entry**: durations cover dotted values 32nd–whole;
+   tuplet grouping (3:2 etc.) still needs a dedicated entry mode and
+   engraving support.
 3. **Articulation editing + rendering**: palm-mute (PM), bends, slides,
    vibrato, harmonics, ties — the data model has them; the engraver draws
    none of them yet and the editor has no input controls for them.
-4. **Duplicate bars** (completes measure management: add/remove exist,
+4. **Notes overflowing a narrowed meter** stay in the model but are ignored
+   by layout/playback overflow handling (known v1 limit); consider
+   re-flowing or flagging affected bars on meter changes.
+5. **Duplicate bars** (completes measure management: add/remove exist,
    duplicate is missing).
-5. Phase 1b: notation-only view toggle (engine renders one staff), Guitar
+6. Phase 1b: notation-only view toggle (engine renders one staff), Guitar
    Pro (.gp3-7)/MusicXML/MIDI import, MusicXML/MIDI/PDF export.
-6. Playback v2: per-track mixer (Track model already has volume/pan/mute/
+7. Playback v2: per-track mixer (Track model already has volume/pan/mute/
    solo), better synth voices per instrument family, loop sections, tempo %
    (practice tools per ROADMAP Phase 2).
-7. Phase 1c prototype (timebox 2 weeks): drag-note pitch/duration +
+8. Phase 1c prototype (timebox 2 weeks): drag-note pitch/duration +
    hum-a-correction input (monophonic pitch detection, WASM).
-8. Phase 2+: accounts/sync/billing, practice tools, AI (chord-chart
+9. Phase 2+: accounts/sync/billing, practice tools, AI (chord-chart
    autopilot first), live session (latency architecture in
    docs/ARCHITECTURE.md), arranger — per docs/ROADMAP.md.
-9. Naming: decide (Adnoto leads), then domain/trademark check + branding.
+10. Naming: decide (Adnoto leads), then domain/trademark check + branding.
 
 ## 9. Decisions already made (do not relitigate without reason)
 

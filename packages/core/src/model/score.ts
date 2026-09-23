@@ -73,7 +73,13 @@ export interface Bar {
   readonly timeSignature: { readonly numerator: number; readonly denominator: number };
   /** Optional key signature change at this bar, e.g. { fifths: 2, mode: "major" }. */
   readonly keyChange: { readonly fifths: number; readonly mode: "major" | "minor" } | null;
-  readonly tempo: number | null; // BPM; null = carry previous
+  /** BPM of the notated beat unit; null = carry previous. */
+  readonly tempo: number | null;
+  /**
+   * Ticks of the beat unit the tempo refers to (e.g. 240 = ♪=bpm, 360 = ♪.=bpm,
+   * 480 = ♩=bpm). null/undefined = quarter note (legacy scores default here).
+   */
+  readonly tempoUnit?: number | null;
   readonly voices: readonly Voice[];
 }
 

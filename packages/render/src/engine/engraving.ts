@@ -1,4 +1,5 @@
 ﻿import type { Note } from "@stdbd/core";
+import { TICKS_PER_QUARTER } from "@stdbd/core";
 import type { BarBox, LayoutDocument, TrackBar } from "./layout.js";
 import { durationClass, keyAlteredPcs, type DurationClass } from "./layout.js";
 import { G, MUSIC_FONT } from "./smufl.js";
@@ -137,6 +138,33 @@ export function engrave(layout: LayoutDocument): string {
 // Header (title / artist / tempo)
 // ---------------------------------------------------------------------------
 
+/** Notated tempo mark to show in the header (the first bar carrying one). */
+function headerTempoMark(layout: LayoutDocument): { tempo: number; unitTicks: number } | null {
+  const bars = layout.score.bars;
+  for (let i = 0; i < bars.length; i++) {
+    const bar = bars[i];
+    if (bar && bar.tempo !== null) return { tempo: bar.tempo, unitTicks: bar.tempoUnit ?? TICKS_PER_QUARTER };
+  }
+  return null;
+}
+
+/** SMuFL metronome glyph for a beat unit (dotted units round to their base value). */
+export function tempoUnitGlyph(unitTicks: number): number {
+  const quarters = unitTicks / TICKS_PER_QUARTER;
+  if (quarters >= 3) return G.metNoteWhole;
+  if (quarters >= 1.5) return G.metNoteHalfUp;
+  if (quarters >= 0.75) return G.metNoteQuarterUp;
+  if (quarters >= 0.375) return G.metNote8thUp;
+  if (quarters >= 0.1875) return G.metNote16thUp;
+  return G.metNote32ndUp;
+}
+
+/** True when the beat unit is dotted (1.5× a base value). */
+export function tempoUnitIsDotted(unitTicks: number): boolean {
+  const quarters = (unitTicks / TICKS_PER_QUARTER) * 2; // in half-quarters
+  return Math.abs(Math.round(quarters) - quarters) > 0.01;
+}
+
 function drawHeader(layout: LayoutDocument, S: number, parts: string[]): void {
   const cx = layout.width / 2;
   if (layout.score.title) {
@@ -149,14 +177,31 @@ function drawHeader(layout: LayoutDocument, S: number, parts: string[]): void {
       uiText(cx, 66, layout.score.artist, { size: 14, weight: 480, fill: engravingTheme.secondaryColor, anchor: "middle", cls: "stdb-artist" }),
     );
   }
-  const tempo = layout.score.bars.find((b) => b.tempo !== null)?.tempo;
-  if (tempo !== undefined) {
-    const x = S * 3.2;
-    parts.push(glyph(G.noteQuarterUp, x, 92, { size: S * 2.6, anchor: "middle", fill: engravingTheme.secondaryColor }));
-    parts.push(
-      uiText(x + S * 1.7, 92, `= ${tempo}`, { size: 15, weight: 520, fill: engravingTheme.secondaryColor, cls: "stdb-tempo", mono: true }),
-    );
+  const mark = headerTempoMark(layout);
+  if (mark) {
+    drawTempoEquation(parts, S * 3.4, 92, S * 2.6, mark.tempo, mark.unitTicks);
   }
+}
+
+/** Draws a tempo equation (notated note + dot + "= bpm") ending at `x + width`. */
+function drawTempoEquation(
+  parts: string[],
+  x: number,
+  baselineY: number,
+  size: number,
+  bpm: number,
+  unitTicks: number,
+): void {
+  const glyphX = x + size * 0.42;
+  parts.push(glyph(tempoUnitGlyph(unitTicks), glyphX, baselineY, { size, anchor: "middle", fill: engravingTheme.secondaryColor }));
+  let textX = x + size * 0.9;
+  if (tempoUnitIsDotted(unitTicks)) {
+    parts.push(glyph(G.metAugmentationDot, glyphX + size * 0.78, baselineY, { size, anchor: "middle", fill: engravingTheme.secondaryColor }));
+    textX = glyphX + size * 1.55;
+  }
+  parts.push(
+    uiText(textX, baselineY, `= ${bpm}`, { size: 14.5, weight: 520, fill: engravingTheme.secondaryColor, cls: "stdb-tempo", mono: true }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -206,13 +251,10 @@ function drawBarNumber(bar: BarBox, tb: TrackBar, S: number, parts: string[]): v
 
 /** Tempo marker above the staff: initial tempo on bar 0, changes on later bars. */
 function drawTempoMark(bar: BarBox, tb: TrackBar, S: number, parts: string[]): void {
-  if (tb.notation && bar.bar.tempo !== null && (bar.index > 0 || !bar.systemStart)) {
-    const y = tb.staffTop - S * 2.4;
-    parts.push(glyph(G.noteQuarterUp, bar.x0 + S * 0.8, y, { size: S * 2.4, anchor: "middle", fill: engravingTheme.secondaryColor }));
-    parts.push(
-      uiText(bar.x0 + S * 2.4, y, `= ${bar.bar.tempo}`, { size: 14, weight: 520, fill: engravingTheme.secondaryColor, cls: "stdb-tempo-mark", mono: true }),
-    );
-  }
+  if (!tb.notation || bar.bar.tempo === null) return;
+  if (bar.index === 0 && bar.systemStart) return; // shown in the header instead
+  const baselineY = tb.staffTop - S * 2.4;
+  drawTempoEquation(parts, bar.x0 + S * 0.2, baselineY, S * 2.4, bar.bar.tempo, bar.bar.tempoUnit ?? TICKS_PER_QUARTER);
 }
 
 // ---------------------------------------------------------------------------
@@ -556,4 +598,58 @@ function drawTabNumbers(bar: BarBox, tb: TrackBar, parts: string[]): void {
       );
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Editable-mark hit areas (time signature / tempo equation)
+// ---------------------------------------------------------------------------
+
+export interface MarkerHitArea {
+  readonly action: "edit-time-sig" | "edit-tempo";
+  readonly barIndex: number;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/**
+ * Click targets over the engraved editable marks: the time-signature block of
+ * each system-opening bar and every tempo equation (header + per-bar changes).
+ * Geometry mirrors the drawing functions above so the hit rect covers exactly
+ * what is visible.
+ */
+export function markerHitAreas(layout: LayoutDocument): MarkerHitArea[] {
+  const S = layout.staffSpace;
+  const areas: MarkerHitArea[] = [];
+
+  if (layout.hasHeader) {
+    const mark = headerTempoMark(layout);
+    if (mark) {
+      const barIndex = layout.score.bars.findIndex((b) => b.tempo !== null);
+      if (barIndex >= 0) {
+        areas.push({ action: "edit-tempo", barIndex, x: S * 1.8, y: 92 - S * 4.4, w: S * 8.4, h: S * 5.6 });
+      }
+    }
+  }
+
+  for (const system of layout.systems) {
+    for (const bar of system.bars) {
+      const tb = bar.tracks.find((t) => t.notation);
+      if (!tb) continue;
+      if (bar.timeSignature) {
+        const digitW = S * 2.0;
+        const num = String(bar.timeSignature.numerator);
+        const den = String(bar.timeSignature.denominator);
+        const block = Math.max(num.length, den.length) * digitW;
+        const x = bar.x0 + S * 4.7 + Math.abs(bar.keyFifths ?? 0) * S * 0.95 + S * 0.7;
+        areas.push({ action: "edit-time-sig", barIndex: bar.index, x: x - S * 0.4, y: tb.staffTop, w: block + S * 0.8, h: S * 4 });
+      }
+      if (tb.notation && bar.bar.tempo !== null && !(bar.index === 0 && bar.systemStart)) {
+        const baselineY = tb.staffTop - S * 2.4;
+        areas.push({ action: "edit-tempo", barIndex: bar.index, x: bar.x0, y: baselineY - S * 3.8, w: S * 8, h: S * 5 });
+      }
+    }
+  }
+  return areas;
 }

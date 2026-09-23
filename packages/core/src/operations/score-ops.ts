@@ -1,5 +1,5 @@
 import type { Bar, Score } from "../model/index.js";
-import { ticksPerBar } from "../model/index.js";
+import { TICKS_PER_QUARTER, ticksPerBar } from "../model/index.js";
 
 /**
  * Linear id sequence for editing sessions. Seeded above the ids of the
@@ -48,13 +48,38 @@ function maxNoteId(score: Score | undefined): number {
 }
 
 /** Effective tempo at a bar index, resolving null (carry previous). */
-export function tempoAtBar(score: Score, barIndex: number): number {
-  let tempo = 120;
+export interface TempoMark {
+  /** BPM of the notated beat unit (the number written after "="). */
+  readonly bpm: number;
+  /** Ticks of the beat unit (480 = quarter, 240 = eighth, 360 = dotted eighth…). */
+  readonly unitTicks: number;
+}
+
+/** Ticks of a bar's tempo beat unit (quarter when absent — legacy scores). */
+export function tempoUnitOf(bar: Bar): number {
+  return bar.tempoUnit ?? TICKS_PER_QUARTER;
+}
+
+/** Nearest tempo marker at or before `barIndex`, or null when none exists. */
+export function tempoMarkAt(score: Score, barIndex: number): TempoMark | null {
+  let mark: TempoMark | null = null;
   for (let i = 0; i <= barIndex && i < score.bars.length; i++) {
-    const t = score.bars[i]?.tempo;
-    if (t !== null && t !== undefined) tempo = t;
+    const bar = score.bars[i];
+    if (!bar || bar.tempo === null) continue;
+    mark = { bpm: bar.tempo, unitTicks: tempoUnitOf(bar) };
   }
-  return tempo;
+  return mark;
+}
+
+/** Converts a notated mark into BPM of the quarter note (playback unit). */
+export function quarterBpmOf(mark: TempoMark): number {
+  return (mark.bpm * mark.unitTicks) / TICKS_PER_QUARTER;
+}
+
+/** Effective tempo at a bar index in quarter-BPM, resolving null (carry previous). */
+export function tempoAtBar(score: Score, barIndex: number): number {
+  const mark = tempoMarkAt(score, barIndex);
+  return mark ? quarterBpmOf(mark) : 120;
 }
 
 /** Total play time (seconds) of a bar index range — used by playback & practice tools. */

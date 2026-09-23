@@ -1,5 +1,5 @@
 import type { Score } from "@stdbd/core";
-import { TICKS_PER_QUARTER, ticksPerBar } from "@stdbd/core";
+import { TICKS_PER_QUARTER, tempoUnitOf, ticksPerBar } from "@stdbd/core";
 import type { ScorePlayer } from "../renderer.js";
 
 /**
@@ -51,6 +51,8 @@ export class WebAudioPlayer implements ScorePlayer {
   private barSeconds: readonly number[] = [];
   private totalSec = 0.001;
   private pointer = 0;
+  /** Score the current timeline was built from (avoids redundant rebuilds). */
+  private timelineScore: Score | null = null;
   private interval: ReturnType<typeof setInterval> | null = null;
   private positionRaf: number | null = null;
   private startCtxTime = 0;
@@ -101,7 +103,50 @@ export class WebAudioPlayer implements ScorePlayer {
   play(): void {
     if (this.playing) return;
     const pausedOffset = this.offsetSec > 0.02 ? this.offsetSec : null;
-    this.begin(pausedOffset);
+    const ctx = this.ctx;
+    // fast path: context already running → begin synchronously, no promise hop
+    if (ctx) {
+      if (ctx.state === "running") {
+        this.beginAt(pausedOffset);
+      } else {
+        // never start scheduling against a suspended clock — begin the moment
+        // the context is audible (usually the same gesture that pressed play)
+        void ctx.resume().then(() => {
+          if (!this.playing) this.beginAt(pausedOffset);
+        });
+      }
+      return;
+    }
+    void this.ensureContext().then(() => {
+      const resumed = this.ctx;
+      if (!resumed) return;
+      if (resumed.state === "suspended") void resumed.resume();
+      this.beginAt(pausedOffset);
+    });
+  }
+
+  /**
+   * Pre-arms audio before the play press: creates + resumes the AudioContext
+   * (autoplay policies only allow this inside a user gesture) and generates
+   * the pluck buffers ahead of time, so hitting play produces sound in a few
+   * milliseconds. Call from any user gesture on the score surface.
+   */
+  prewarm(): void {
+    if (this.playing) return;
+    void this.ensureContext().then(() => {
+      const ctx = this.ctx;
+      if (!ctx || ctx.state === "suspended") {
+        if (ctx) void ctx.resume();
+      }
+      const score = this.getScore();
+      if (!score) return;
+      if (this.timelineScore !== score) {
+        this.rebuildTimeline(score);
+        this.timelineScore = score;
+      }
+      this.primeUpcoming(0, 1.0);
+      this.primeRestAsync();
+    });
   }
 
   pause(): void {
@@ -132,6 +177,7 @@ export class WebAudioPlayer implements ScorePlayer {
     this.stopTimers();
     this.stopAllSources();
     this.playing = false;
+    this.timelineScore = null;
     void this.ctx?.close();
     this.ctx = null;
     this.stateListeners.clear();
@@ -140,69 +186,90 @@ export class WebAudioPlayer implements ScorePlayer {
 
   // -- scheduling core -----------------------------------------------------------
 
-  private begin(pausedOffset: number | null): void {
+  /**
+   * Builds the audio timeline and starts the scheduler. Runs synchronously —
+   * by the time the user presses play the context is prewarmed, buffers are
+   * cached, so the first note sounds within a few milliseconds.
+   */
+  private beginAt(pausedOffset: number | null): void {
     const score = this.getScore();
-    if (!score) return;
-    void this.ensureContext().then(() => {
-      const ctx = this.ctx;
-      if (!ctx) return;
-      if (ctx.state === "suspended") void ctx.resume();
-      this.rebuildTimeline(score);
-      this.primeBuffers();
-      const master = this.master;
-      if (master) {
-        master.gain.cancelScheduledValues(ctx.currentTime);
-        master.gain.setValueAtTime(0.85, ctx.currentTime);
-      }
-      // start point resolved AFTER the timeline exists — converting the caret
-      // position earlier (empty tempo map) made play-from-selection start at bar 1
-      const from = pausedOffset ?? this.positionSecondsOf(this.startPosition);
-      this.offsetSec = Math.min(Math.max(0, from), Math.max(0, this.totalSec - 0.05));
-      this.pointer = this.findIndexAt(this.offsetSec);
-      this.startCtxTime = ctx.currentTime + 0.08;
-      this.playing = true;
-      this.emitState();
-      this.interval = setInterval(() => {
-        this.scheduleWindow();
-      }, SCHEDULER_TICK_MS);
+    const ctx = this.ctx;
+    if (!score || !ctx) return;
+    this.rebuildTimeline(score);
+    this.timelineScore = score;
+    const from = pausedOffset ?? this.positionSecondsOf(this.startPosition);
+    this.primeUpcoming(from, 1.2);
+    this.primeRestAsync();
+    const master = this.master;
+    if (master) {
+      master.gain.cancelScheduledValues(ctx.currentTime);
+      master.gain.setValueAtTime(0.85, ctx.currentTime);
+    }
+    this.offsetSec = Math.min(Math.max(0, from), Math.max(0, this.totalSec - 0.05));
+    this.pointer = this.findIndexAt(this.offsetSec);
+    this.startCtxTime = ctx.currentTime + 0.03;
+    this.playing = true;
+    this.emitState();
+    this.interval = setInterval(() => {
       this.scheduleWindow();
-      const tick = (): void => {
-        if (!this.playing) return;
-        const pos = this.virtualNow();
-        if (pos >= this.totalSec) {
-          this.stopTimers();
-          this.fadeOutAndStop();
-          this.playing = false;
-          this.offsetSec = 0;
-          this.pointer = 0;
-          this.emitPosition(null);
-          this.emitState();
-          return;
-        }
-        // the playhead tracks what the listener hears, not the audio clock:
-        // compensate for output latency so sound and visuals stay in sync
-        const audiblePos = Math.max(0, pos - this.visualLatencySec());
-        this.emitPosition(this.locate(audiblePos));
-        this.positionRaf = requestAnimationFrame(tick);
-      };
+    }, SCHEDULER_TICK_MS);
+    this.scheduleWindow();
+    const tick = (): void => {
+      if (!this.playing) return;
+      const pos = this.virtualNow();
+      if (pos >= this.totalSec) {
+        this.stopTimers();
+        this.fadeOutAndStop();
+        this.playing = false;
+        this.offsetSec = 0;
+        this.pointer = 0;
+        this.emitPosition(null);
+        this.emitState();
+        return;
+      }
+      // the playhead tracks what the listener hears, not the audio clock:
+      // compensate for output latency so sound and visuals stay in sync
+      const audiblePos = Math.max(0, pos - this.visualLatencySec());
+      this.emitPosition(this.locate(audiblePos));
       this.positionRaf = requestAnimationFrame(tick);
-    });
+    };
+    this.positionRaf = requestAnimationFrame(tick);
   }
 
-  /** Pre-generates all pluck buffers so playback never hitches on a cache miss. */
-  private primeBuffers(): void {
-    const score = this.getScore();
-    if (!score) return;
-    for (const bar of score.bars) {
-      for (const note of bar.voices[0]?.notes ?? []) {
-        const style: PluckStyle = note.articulations.some((a) => a.kind === "palmMute")
-          ? "palmMute"
-          : note.articulations.some((a) => a.kind === "letRing")
-            ? "letRing"
-            : "normal";
-        void this.pluckBuffer(note.pitch, style);
-      }
+  /** Synchronously generates every pluck buffer needed in `[from, from+sec)`. */
+  private primeUpcoming(fromSec: number, sec: number): void {
+    const until = fromSec + sec;
+    for (const ev of this.events) {
+      if (ev.sec >= until) break;
+      this.pluckBuffer(ev.pitch, ev.style);
     }
+  }
+
+  /**
+   * Generates the remaining pluck buffers in small async chunks so no single
+   * frame stalls — playback never hitches on a cache miss.
+   */
+  private primeRestAsync(): void {
+    const pending: { pitch: number; style: PluckStyle }[] = [];
+    const seen = new Set<string>();
+    for (const ev of this.events) {
+      const key = `${ev.pitch}:${ev.style}`;
+      if (seen.has(key) || this.bufferCache.has(key)) continue;
+      seen.add(key);
+      pending.push({ pitch: ev.pitch, style: ev.style });
+    }
+    let i = 0;
+    const CHUNK = 6;
+    const step = (): void => {
+      if (!this.ctx) return; // disposed
+      const end = Math.min(i + CHUNK, pending.length);
+      for (; i < end; i++) {
+        const ev = pending[i];
+        if (ev) this.pluckBuffer(ev.pitch, ev.style);
+      }
+      if (i < pending.length) setTimeout(step, 0);
+    };
+    if (i < pending.length) setTimeout(step, 0);
   }
 
   /**
@@ -488,9 +555,11 @@ export class WebAudioPlayer implements ScorePlayer {
     const barSeconds: number[] = [];
     let t = 0;
     let ticksAcc = 0;
-    let tempo = 120;
+    let tempo = 120; // quarter-BPM, updated by notated marks (with beat units)
     for (const bar of score.bars) {
-      if (bar.tempo !== null) tempo = bar.tempo;
+      if (bar.tempo !== null) {
+        tempo = (bar.tempo * tempoUnitOf(bar)) / TICKS_PER_QUARTER;
+      }
       const ticks = ticksPerBar(bar.timeSignature);
       const secPerTick = 60 / (tempo * TICKS_PER_QUARTER);
       barStarts.push(t);

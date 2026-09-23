@@ -1,4 +1,5 @@
 import type { BarId, Note, NoteId, Score, TrackId } from "../model/index.js";
+import { TICKS_PER_QUARTER } from "../model/index.js";
 /**
  * Event-sourced editing: every modification of a Score is a Command that
  * returns the new Score. Commands are pure functions; undo/redo, versioning,
@@ -80,8 +81,13 @@ export interface RemoveBar {
 export interface SetBarTempo {
   readonly type: "setBarTempo";
   readonly barId: BarId;
-  /** BPM marker at this bar; null removes the marker (carries the previous). */
+  /** BPM of the notated beat unit; null removes the marker (carries the previous). */
   readonly tempo: number | null;
+  /**
+   * Ticks of the beat unit the BPM refers to (240 = eighth, 360 = dotted
+   * eighth, 480 = quarter…). Omitted keeps the bar's current unit.
+   */
+  readonly unitTicks?: number | null;
 }
 
 export interface SetTimeSignature {
@@ -172,10 +178,28 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
       if (!hasBar(score, command.barId)) {
         throw new Error(`Bar ${String(command.barId)} not found`);
       }
+      const existing = score.bars.find((bar) => bar.id === command.barId);
+      if (!existing) throw new Error(`Bar ${String(command.barId)} not found`);
+      let unitTicks: number | null | undefined;
+      if (command.tempo === null) {
+        unitTicks = null; // clearing the marker clears its beat unit
+      } else if (command.unitTicks !== undefined && command.unitTicks !== null) {
+        if (
+          !Number.isInteger(command.unitTicks) ||
+          command.unitTicks <= 0 ||
+          command.unitTicks > TICKS_PER_QUARTER * 8 ||
+          command.unitTicks % 30 !== 0
+        ) {
+          throw new Error(`Invalid tempo unit ticks ${String(command.unitTicks)}`);
+        }
+        unitTicks = command.unitTicks;
+      } else {
+        unitTicks = existing.tempoUnit ?? null;
+      }
       return {
         ...score,
         bars: score.bars.map((bar) =>
-          bar.id === command.barId ? { ...bar, tempo: command.tempo } : bar,
+          bar.id === command.barId ? { ...bar, tempo: command.tempo, tempoUnit: unitTicks } : bar,
         ),
       };
     }

@@ -1,5 +1,7 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { openStringPitch, type Caret } from "./caret";
+import { DurationPicker } from "./DurationPicker";
+import { SheetMenu, type SheetMenuState } from "./SheetMenu";
 import type { useEditor } from "./useEditor";
 import type { StdbdEngine } from "@stdbd/render";
 import type { Score } from "@stdbd/core";
@@ -14,9 +16,13 @@ interface ScoreEditorProps {
 /**
  * The score canvas + keyboard editing surface.
  * The engine draws the score and the caret/playhead overlays; React only
- * keeps it in sync with the document and caret state.
+ * keeps it in sync with the document and caret state. Clickable marks open
+ * the tempo/meter popovers; right-click (desktop) or long-press (touch)
+ * opens the score context menu.
  */
 export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps) {
+  const [menu, setMenu] = useState<SheetMenuState | null>(null);
+
   // re-render whenever the document changes
   useEffect(() => {
     if (renderer) renderer.loadScore(score);
@@ -44,6 +50,33 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
     };
   }, [renderer, editor.appendBar, editor.removeLastBar]);
 
+  // editable sheet marks + score context menu
+  useEffect(() => {
+    if (!renderer) return;
+    const offMarker = renderer.onSheetMarkerClicked((click) => {
+      setMenu({
+        kind: click.action === "edit-tempo" ? "tempo" : "timesig",
+        barIndex: click.barIndex,
+        x: click.clientX,
+        y: click.clientY,
+      });
+    });
+    const offContext = renderer.onContextMenu((request) => {
+      setMenu({
+        kind: "context",
+        barIndex: request.barIndex,
+        x: request.clientX,
+        y: request.clientY,
+      });
+    });
+    return () => {
+      offMarker();
+      offContext();
+    };
+  }, [renderer]);
+
+  const closeMenu = useCallback(() => { setMenu(null); }, []);
+
   const stringLabels = Array.from(
     { length: score.tracks[0]?.tuning?.strings.length ?? 0 },
     (_, i) => openStringPitch(score, i),
@@ -60,9 +93,14 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
           {editor.caretInfo.step}
           {editor.pendingFret !== null ? ` · Fret ${editor.pendingFret}_` : ""}
         </span>
+        <DurationPicker
+          value={editor.entryDuration.value}
+          dotted={editor.entryDuration.dotted}
+          onSelect={editor.setEntryDuration}
+        />
         <span className="hint">
-          Click a beat · Arrows navigate · 0-9 frets · Ctrl+1/2 then digit for 10-24 · Backspace
-          delete · Ctrl+Z undo · Space play
+          Click a beat · 0-9 frets · value palette sets note length · Right-click/long-press for
+          tempo, meter & measures · Ctrl+Z undo · Space play
         </span>
         <span className="strings">
           {stringLabels.map((midi, i) => (
@@ -72,6 +110,19 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
           ))}
         </span>
       </div>
+      {menu ? (
+        <SheetMenu
+          menu={menu}
+          score={score}
+          onClose={closeMenu}
+          onMenuAction={setMenu}
+          onTempoChange={(barIndex, bpm, unitTicks) => { editor.setTempoAtBar(barIndex, bpm, unitTicks); }}
+          onRemoveTempo={editor.removeTempoAtBar}
+          onTimeSignatureChange={editor.setTimeSignatureAtBar}
+          onInsertMeasure={editor.insertBarAfter}
+          onDeleteMeasure={(barIndex) => editor.removeBarAt(barIndex)}
+        />
+      ) : null}
     </div>
   );
 }

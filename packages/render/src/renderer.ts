@@ -48,3 +48,20 @@ export interface ScoreInteraction {
    */
   onScoreClicked(listener: (position: ClickedPosition) => void): () => void;
 }
+
+/** A click on an editable sheet mark (time signature block / tempo equation). */
+export interface SheetMarkerClick {
+  readonly action: "edit-time-sig" | "edit-tempo";
+  readonly barIndex: number;
+  readonly clientX: number;
+  readonly clientY: number;
+}
+
+/** A request to open the score context menu (right-click / long-press). */
+export interface ContextMenuRequest {
+  readonly barIndex: number;
+  readonly tick: number;
+  readonly stringIndex: number | null;
+  readonly clientX: number;
+  readonly clientY: number;
+}

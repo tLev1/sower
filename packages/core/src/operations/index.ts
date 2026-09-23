@@ -1,2 +1,10 @@
-export { barStartTime, createIdAllocator, tempoAtBar, validateBar } from "./score-ops.js";
-export type { IdAllocator } from "./score-ops.js";
+export {
+  barStartTime,
+  createIdAllocator,
+  quarterBpmOf,
+  tempoAtBar,
+  tempoMarkAt,
+  tempoUnitOf,
+  validateBar,
+} from "./score-ops.js";
+export type { IdAllocator, TempoMark } from "./score-ops.js";

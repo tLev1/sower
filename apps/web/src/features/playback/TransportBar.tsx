@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { StdbdEngine } from "@stdbd/render";
-import { tempoAtBar, type Score } from "@stdbd/core";
+import { G } from "@stdbd/render";
+import { tempoMarkAt, TICKS_PER_QUARTER, type Score } from "@stdbd/core";
+import { durationIsDotted, durationValueOfTicks } from "../editor/caret";
 
 interface TransportBarProps {
   renderer: StdbdEngine | null;
@@ -10,7 +12,8 @@ interface TransportBarProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
-  onTempoChange: (bpm: number) => void;
+  /** Commits the notated tempo (BPM of the current beat unit). */
+  onTempoChange: (bpm: number, unitTicks: number) => void;
   onTimeSignatureChange: (numerator: number, denominator: number) => void;
 }
 
@@ -24,6 +27,16 @@ const TIME_SIGNATURES: readonly { readonly n: number; readonly d: number }[] = [
   { n: 12, d: 8 },
   { n: 7, d: 8 },
 ];
+
+/** Bravura metronome glyph for the beat unit a tempo refers to. */
+const UNIT_GLYPH: Record<string, number> = {
+  whole: G.metNoteWhole,
+  half: G.metNoteHalfUp,
+  quarter: G.metNoteQuarterUp,
+  eighth: G.metNote8thUp,
+  "16th": G.metNote16thUp,
+  "32nd": G.metNote32ndUp,
+};
 
 export function TransportBar({
   renderer,
@@ -43,7 +56,12 @@ export function TransportBar({
     return renderer.onStateChange(setPlaying);
   }, [renderer]);
 
-  const tempo = tempoAtBar(score, Math.max(0, caretBarIndex));
+  const mark = tempoMarkAt(score, Math.max(0, caretBarIndex)) ?? {
+    bpm: 120,
+    unitTicks: TICKS_PER_QUARTER,
+  };
+  const unitValue = durationValueOfTicks(mark.unitTicks);
+  const dotted = durationIsDotted(mark.unitTicks);
   const sig = score.bars[Math.max(0, caretBarIndex)]?.timeSignature ?? { numerator: 4, denominator: 4 };
   const sigLabel = (n: number, d: number): string => `${n}/${d}`;
 
@@ -78,8 +96,16 @@ export function TransportBar({
       </button>
       <div className="divider" />
       <label className="field">
-        <span className="field-icon">♩</span>
-        <TempoField value={tempo} onCommit={onTempoChange} />
+        <span className="field-icon">
+          {String.fromCodePoint(UNIT_GLYPH[unitValue] ?? G.metNoteQuarterUp)}
+          {dotted ? String.fromCodePoint(G.metAugmentationDot) : ""}
+        </span>
+        <TempoField
+          value={mark.bpm}
+          onCommit={(bpm) => {
+            onTempoChange(bpm, mark.unitTicks);
+          }}
+        />
         <span className="field-label">BPM</span>
       </label>
       <label className="field">

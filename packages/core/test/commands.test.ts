@@ -169,7 +169,29 @@ describe("applyCommand", () => {
     expect(score.bars[0]!.tempo).toBe(120);
     const cleared = applyCommand(faster, { type: "setBarTempo", barId: 1 as never, tempo: null }, ctx);
     expect(cleared.bars[0]!.tempo).toBeNull();
+    expect(cleared.bars[0]!.tempoUnit).toBeNull();
     expect(() => applyCommand(faster, { type: "setBarTempo", barId: 1 as never, tempo: 900 }, ctx)).toThrow();
+  });
+
+  it("setBarTempo stores the notated beat unit (dotted eighth, quarter…)", () => {
+    const score = makeScore();
+    const dottedEighth = applyCommand(
+      score,
+      { type: "setBarTempo", barId: 1 as never, tempo: 85, unitTicks: 360 },
+      ctx,
+    );
+    expect(dottedEighth.bars[0]!.tempo).toBe(85);
+    expect(dottedEighth.bars[0]!.tempoUnit).toBe(360);
+    // re-commit keeps the existing unit when none is supplied
+    const reSet = applyCommand(
+      dottedEighth,
+      { type: "setBarTempo", barId: 1 as never, tempo: 120 },
+      ctx,
+    );
+    expect(reSet.bars[0]!.tempoUnit).toBe(360);
+    expect(() =>
+      applyCommand(score, { type: "setBarTempo", barId: 1 as never, tempo: 120, unitTicks: 100 }, ctx),
+    ).toThrow();
   });
 
   it("setTimeSignature applies from the target bar onward", () => {

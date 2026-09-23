@@ -44,6 +44,25 @@ export function App() {
     };
   }, [doc]);
 
+  // prewarm audio on the first user gesture anywhere → instant play latency
+  useEffect(() => {
+    const prewarm = (): void => {
+      rendererRef.current?.prewarm();
+    };
+    window.addEventListener("pointerdown", prewarm, { capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", prewarm, { capture: true });
+    };
+  }, []);
+
+  // debug/test hook — used by scripts and E2E (mirrors __stdbRenderer)
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__stdbDoc = doc;
+    return () => {
+      delete (window as unknown as Record<string, unknown>).__stdbDoc;
+    };
+  }, [doc]);
+
   return (
     <div className="app">
       <header className="topbar">

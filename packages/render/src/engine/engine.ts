@@ -1,5 +1,12 @@
 import type { Score } from "@stdbd/core";
-import type { ClickedPosition, ScoreInteraction, ScorePlayer, ScoreRenderer } from "../renderer.js";
+import type {
+  ClickedPosition,
+  ContextMenuRequest,
+  ScoreInteraction,
+  ScorePlayer,
+  ScoreRenderer,
+  SheetMarkerClick,
+} from "../renderer.js";
 import {
   absoluteTickOfBar,
   barRectAt,
@@ -9,7 +16,7 @@ import {
   positionAt,
   type LayoutDocument,
 } from "./layout.js";
-import { engrave } from "./engraving.js";
+import { engrave, markerHitAreas } from "./engraving.js";
 import { WebAudioPlayer } from "./player.js";
 import { engravingTheme } from "./theme.js";
 
@@ -57,6 +64,11 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   private readonly clickListeners = new Set<(position: ClickedPosition) => void>();
   private readonly appendBarListeners = new Set<() => void>();
   private readonly removeBarListeners = new Set<() => void>();
+  private readonly sheetMarkerListeners = new Set<(click: SheetMarkerClick) => void>();
+  private readonly contextMenuListeners = new Set<(request: ContextMenuRequest) => void>();
+  private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  private longPressFired: { readonly x: number; readonly y: number; readonly at: number } | null = null;
+  private suppressClickUntil = 0;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -87,6 +99,7 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     this.resizeObserver.observe(this.container);
 
     this.container.addEventListener("pointerdown", this.handlePointerDown);
+    this.container.addEventListener("contextmenu", this.handleContextMenu);
 
     // the engine owns the playhead: track playback position internally
     this.positionHook = this.player.onPosition((pos) => {
@@ -117,8 +130,10 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
       clearTimeout(this.resizeTimer);
       this.resizeTimer = null;
     }
+    this.clearLongPress();
     this.overlaySvg?.removeEventListener("click", this.handleOverlayClick);
     this.container.removeEventListener("pointerdown", this.handlePointerDown);
+    this.container.removeEventListener("contextmenu", this.handleContextMenu);
     this.player.dispose();
     this.wrapper?.remove();
     this.wrapper = null;
@@ -130,6 +145,8 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     this.clickListeners.clear();
     this.appendBarListeners.clear();
     this.removeBarListeners.clear();
+    this.sheetMarkerListeners.clear();
+    this.contextMenuListeners.clear();
     delete (window as unknown as Record<string, unknown>).__stdbRenderer;
   }
 
@@ -218,6 +235,26 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     };
   }
 
+  /** Subscribes to clicks on editable sheet marks (time signature / tempo). */
+  onSheetMarkerClicked(listener: (click: SheetMarkerClick) => void): () => void {
+    this.sheetMarkerListeners.add(listener);
+    return () => {
+      this.sheetMarkerListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Subscribes to score-context-menu requests: right-click on desktop,
+   * long-press (~550 ms) on touch devices. The request carries the score
+   * position and client point the menu should be anchored to.
+   */
+  onContextMenu(listener: (request: ContextMenuRequest) => void): () => void {
+    this.contextMenuListeners.add(listener);
+    return () => {
+      this.contextMenuListeners.delete(listener);
+    };
+  }
+
   // -- ScorePlayer -----------------------------------------------------------------
 
   play(): void {
@@ -242,6 +279,14 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
 
   onStateChange(listener: (isPlaying: boolean) => void): () => void {
     return this.player.onStateChange(listener);
+  }
+
+  /**
+   * Pre-arms audio (context + pluck buffers) from a user gesture so pressing
+   * play produces sound with near-zero latency.
+   */
+  prewarm(): void {
+    this.player.prewarm();
   }
 
   // -- internals ---------------------------------------------------------------------
@@ -344,10 +389,22 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     }
   }
 
-  /** Small +/− controls after the final barline for extending the score. */
+  /** Small +/− controls after the final barline + editable-mark hit areas. */
   private measureButtonsMarkup(): string {
     const layout = this.layout;
     if (!layout) return "";
+    const parts: string[] = [this.barButtonsMarkup(layout)];
+    for (const area of markerHitAreas(layout)) {
+      parts.push(
+        `<rect data-stdb-action="${area.action}" data-bar="${area.barIndex}"` +
+          ` x="${round2(area.x)}" y="${round2(area.y)}" width="${round2(Math.max(area.w, 8))}" height="${round2(Math.max(area.h, 8))}"` +
+          ` fill="transparent" class="stdb-marker-hit" />`,
+      );
+    }
+    return parts.join("");
+  }
+
+  private barButtonsMarkup(layout: LayoutDocument): string {
     const lastSystem = layout.systems[layout.systems.length - 1];
     const lastBar = lastSystem?.bars[lastSystem.bars.length - 1];
     const tb = lastBar?.tracks[0];
@@ -377,6 +434,7 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   }
 
   private handleOverlayClick = (event: MouseEvent): void => {
+    if (performance.now() < this.suppressClickUntil) return; // released a long-press
     const target = event.target;
     if (!(target instanceof Element)) return;
     const actionEl = target.closest("[data-stdb-action]");
@@ -387,6 +445,16 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
       for (const listener of [...this.appendBarListeners]) listener();
     } else if (action === "remove-bar") {
       for (const listener of [...this.removeBarListeners]) listener();
+    } else if (action === "edit-time-sig" || action === "edit-tempo") {
+      const barIndex = Number(actionEl.getAttribute("data-bar") ?? "0");
+      if (!Number.isFinite(barIndex)) return;
+      const click: SheetMarkerClick = {
+        action,
+        barIndex,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
+      for (const listener of [...this.sheetMarkerListeners]) listener(click);
     }
   };
 
@@ -394,10 +462,68 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     // measure buttons handle their own clicks — don't reposition the caret
     // (re-rendering the overlay here would destroy the button mid-click)
     if (event.target instanceof Element && event.target.closest("[data-stdb-action]")) return;
+    // a touch on the score is a user gesture — pre-arm audio for instant play
+    this.player.prewarm();
+    if (event.button !== 0) return;
+    if (event.pointerType === "touch" && event.isPrimary) this.armLongPress(event);
     const position = this.positionAt(event.clientX, event.clientY);
     if (!position) return;
     for (const listener of this.clickListeners) listener(position);
   };
+
+  // -- context menu (right-click / long-press) ---------------------------------------
+
+  private handleContextMenu = (event: MouseEvent): void => {
+    event.preventDefault(); // premium sheets own their context menu
+    this.player.prewarm();
+    // a long-press that just opened the menu re-fires as a native contextmenu — skip
+    const fired = this.longPressFired;
+    if (
+      fired &&
+      performance.now() - fired.at < 800 &&
+      Math.abs(fired.x - event.clientX) < 24 &&
+      Math.abs(fired.y - event.clientY) < 24
+    ) {
+      return;
+    }
+    this.openContextMenu(event.clientX, event.clientY);
+  };
+
+  private armLongPress(event: PointerEvent): void {
+    this.clearLongPress();
+    this.longPressTimer = setTimeout(() => {
+      this.longPressTimer = null;
+      this.longPressFired = { x: event.clientX, y: event.clientY, at: performance.now() };
+      this.suppressClickUntil = performance.now() + 400;
+      this.openContextMenu(event.clientX, event.clientY);
+    }, 550);
+    const cancel = (): void => {
+      this.clearLongPress();
+    };
+    window.addEventListener("pointermove", cancel, { once: true });
+    window.addEventListener("pointerup", cancel, { once: true });
+    window.addEventListener("pointercancel", cancel, { once: true });
+  }
+
+  private clearLongPress(): void {
+    if (this.longPressTimer !== null) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
+  }
+
+  private openContextMenu(clientX: number, clientY: number): void {
+    const position = this.positionAt(clientX, clientY);
+    if (!position) return;
+    const request: ContextMenuRequest = {
+      barIndex: position.barIndex,
+      tick: position.tick,
+      stringIndex: position.stringIndex,
+      clientX,
+      clientY,
+    };
+    for (const listener of [...this.contextMenuListeners]) listener(request);
+  }
 }
 
 function round2(n: number): number {

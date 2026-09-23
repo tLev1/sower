@@ -38,7 +38,14 @@ export const G = {
   rest32nd: 0xe4e8,
   articAccentAbove: 0xe4a0,
   articStaccatoAbove: 0xe4a2,
-  noteQuarterUp: 0xe1d5, // used in the tempo mark
+  // metronome marks range — balanced stems for tempo equations
+  metNoteWhole: 0xeca2,
+  metNoteHalfUp: 0xeca3,
+  metNoteQuarterUp: 0xeca5,
+  metNote8thUp: 0xeca7,
+  metNote16thUp: 0xeca9,
+  metNote32ndUp: 0xecab,
+  metAugmentationDot: 0xecb7,
   tupletBracket: 0xe880, // reserved
 } as const;
 
