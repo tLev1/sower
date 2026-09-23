@@ -36,7 +36,7 @@ Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
 | Rendering | **stdBd engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
 | Playback | WebAudio Karplus-Strong synth (v1) | articulation-aware; sample engines plug in via SynthEngine seam later |
 | Fonts | Bravura (public/fonts), Inter Variable + JetBrains Mono Variable (fontsource) | music glyphs + UI/mono type |
-| Tests | Vitest 3 | 23 tests green (16 core + 7 render layout) |
+| Tests | Vitest 3 | 46 tests green (23 core + 13 render + 10 web) |
 | Lint | ESLint flat config, typescript-eslint strictTypeChecked | `any` is an error; `scripts/` ignored |
 | CI | `.github/workflows/ci.yml` | lint → typecheck → test → build |
 | E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** — always launch Edge |
@@ -76,7 +76,14 @@ C:\dev\stdBd
 ├── packages/ui/               design tokens (colors/motion/spacing + liveInput budgets)
 ├── scripts/
 │   ├── inspect-page.mjs       dev page in headless Edge: console errors, DOM, screenshot
-│   └── interact-test.mjs      E2E regression: click precision, chord flow, entry model
+│   ├── interact-test.mjs      E2E regression: click precision, chord flow, entry model
+│   ├── probe-transport.mjs    play-from-selection + tempo/meter edit verification
+│   ├── probe-sync.mjs         playhead continuity sampling (frozen-frame / jump detector)
+│   ├── probe-buttons.mjs      measure +/− controls (real mouse clicks)
+│   ├── probe-frets.mjs        two-digit fret entry + ledger overhang verification
+│   ├── probe-play.mjs         playhead visibility while playing
+│   ├── probe-timesig.mjs      Bravura time-sig glyph metric probe (canvas TextMetrics)
+│   └── zoom-staves.mjs        2× crop screenshots of the staves for visual review
 ├── docs/                      ROADMAP.md, ARCHITECTURE.md, ADRs/
 └── handover.md                this file
 ```
@@ -88,7 +95,7 @@ pnpm install
 pnpm dev                 # Vite dev server → http://localhost:5173
 pnpm lint                # ESLint (root, flat config)
 pnpm typecheck           # tsc --noEmit per package
-pnpm test                # Vitest, all packages (23 tests)
+pnpm test                # Vitest, all packages (46 tests)
 pnpm build               # typecheck + vite build
 node scripts/inspect-page.mjs     # with dev server running; screenshot → C:\dev\temp\opencode\page.png
 node scripts/interact-test.mjs    # interaction regression (uses real mouse/keys)
@@ -108,10 +115,12 @@ Git repo on `main`; commit as you go (conventional commits).
 ### Phase 1a — Guitar tab editing (complete, NEW ENGINE)
 - **Rendering (stdBd engine)**: single-track scores render aligned notation +
   TAB staves. Bravura glyphs (clef, time sig, noteheads, rests, accidentals,
-  key sigs), JetBrains Mono for TAB fret numbers + bar numbers, proportional
-  beat spacing (sqrt-duration), slanted beams (eighth runs beamed per quarter,
-  direction follows pitch, secondary beams for 16ths/32nds), title/artist/
-  tempo header, bar numbers at system starts, final double barline.
+  key sigs, tempo marks), JetBrains Mono for TAB fret numbers + bar numbers,
+  proportional beat spacing (sqrt-duration), metrical beams (4/4 beams
+  eighths in groups of 4, 3/4 in 3, 6/8 in 3 — stems follow the
+  farthest-from-middle-line rule, secondary beams for 16ths/32nds),
+  title/artist/tempo header, bar numbers at system starts, per-bar tempo
+  marks, final double barline.
 - **Playback (WebAudio v1)**: Karplus-Strong plucked-string synth with
   articulation awareness (palmMute → short+dark, letRing → long, ghost →
   quiet), chord strum stagger (~11 ms, low strings first), ±5 cent detune,
@@ -168,8 +177,10 @@ Git repo on `main`; commit as you go (conventional commits).
   `@stdbd/ui` tokens — never hardcode colors in the engraver.
 - Coordinate spaces: SVG space (layout coords) vs client coords. The engine
   translates via `staticSvg.getBoundingClientRect()`.
-- Overlays (caret/playhead) live in a separate overlay SVG layered above the
-  static score SVG — re-rendered cheaply, pointer-events: none.
+- Overlays live in a separate overlay SVG layered above the static score
+  SVG, pointer-events: none, split into two groups: `.stdb-btns` (measure
+  controls, rebuilt only on layout changes) and `.stdb-dyn` (caret +
+  playhead, updated per frame — the markup memo skips no-op renders).
 - Beam groups follow meter conventions (`beamGroupSize`): 4/4 beams eighths
   in groups of 4 (half-bar), 3/4 in 3, 2/4 in 2, compound (6/8) in 3 per
   dotted beat. Stem direction per Gould's rule: the note farthest from the
@@ -214,25 +225,35 @@ Git repo on `main`; commit as you go (conventional commits).
    In PowerShell, prefer `pnpm run dev` over plain `pnpm dev`.
    For long-running dev servers from scripts, use `Start-Process` (jobs die
    with the parent shell).
-6. **Debug hook**: `window.__stdbRenderer` exposes the StdbdEngine
+6. **Stale dev server**: Vite HMR sometimes serves an outdated App.tsx after
+   prop-signature changes (TransportBar crashed on a fresh load with the old
+   prop set). If the page errors with props/undefined mismatches right after
+   editing React components, kill the node processes and restart
+   `pnpm run dev` before debugging the code.
+7. **Debug hook**: `window.__stdbRenderer` exposes the StdbdEngine
    (`positionAt`, `pointFor`, `getBarRect`) — used by scripts and E2E.
    Measure-button clicks: the score's container pointerdown handler must
    skip `[data-stdb-action]` targets — otherwise the caret re-render
    destroys the button between mousedown and click and the click never
    fires. The last system reserves ~6.6 staff spaces of tail room so the
    buttons stay inside the overlay SVG's hit-testable area.
-7. Tests use non-null assertions freely (`**/test/**` eslint override);
+8. Tests use non-null assertions freely (`**/test/**` eslint override);
    production code must not.
 
 ## 7. Verification status (last run: all green)
 
-- lint / typecheck / 23 unit tests / production build
+- lint / typecheck / 46 unit tests / production build
 - Browser-verified via `scripts/interact-test.mjs` (real Edge):
   - click on TAB number → `Bar 1 · String 1 · Step 1` ✓
   - click empty A2 line → `Bar 1 · String 5 · Step 3` ✓
   - chord tones stay on the beat ✓ (`chordTonesStayed: true`)
   - ↓ after placement returns to placed tick ✓ (`downReturned: true`)
   - new note on empty beat auto-advances ✓ (`createAdvanced: true`)
+- Playhead continuity probe (`probe-sync.mjs`): zero frozen frames, zero
+  jumps across bar crossings ✓
+- Play-from-selection (`probe-transport.mjs`): playhead in the selected bar
+  within 140 ms of play ✓; BPM edit → sheet header updates ✓; meter edit →
+  3/4 glyphs engraved, beams regroup in threes ✓
 - No page errors; favicon served inline.
 
 ## 8. Known gaps / next steps (in order)
@@ -241,17 +262,21 @@ Git repo on `main`; commit as you go (conventional commits).
    the full layout + SVG string. Fast, but a bar-local layout cache (dirty
    bar → re-render that bar's group only) makes it feel even snappier for
    long scores.
-2. **Articulation rendering**: palm-mute (PM), bends, slides, vibrato,
-   harmonics — the data model has them; the engraver doesn't draw them yet.
-3. **Bar management**: add/remove/duplicate bars (completes Phase 1a).
-4. **Durations**: fixed eighth grid; add note-value selection (1/4, 1/2,
-   dots, triplets) — `durationClass()` already maps ticks.
-5. Phase 1b: notation-only view toggle (engine renders one staff), GP/
-   MusicXML/MIDI import, PDF/MusicXML/MIDI export.
-6. Phase 1c prototype (timebox 2 weeks): drag-note pitch/duration +
+2. **Durations**: fixed eighth grid; add note-value selection (1/4, 1/2,
+   dots, triplets) — `durationClass()` already maps ticks; the metrical beam
+   rules and secondary beams are ready for mixed values.
+3. **Articulation editing + rendering**: palm-mute (PM), bends, slides,
+   vibrato, harmonics, ties — the data model has them; the engraver draws
+   none of them yet and the editor has no input controls for them.
+4. **Duplicate bars** (completes measure management: add/remove exist,
+   duplicate is missing).
+5. Phase 1b: notation-only view toggle (engine renders one staff), Guitar
+   Pro (.gp3-7)/MusicXML/MIDI import, MusicXML/MIDI/PDF export.
+6. Playback v2: per-track mixer (Track model already has volume/pan/mute/
+   solo), better synth voices per instrument family, loop sections, tempo %
+   (practice tools per ROADMAP Phase 2).
+7. Phase 1c prototype (timebox 2 weeks): drag-note pitch/duration +
    hum-a-correction input (monophonic pitch detection, WASM).
-7. Playback v2: per-track mixer (Track model already has volume/pan/mute/
-   solo), better synth voices per instrument family.
 8. Phase 2+: accounts/sync/billing, practice tools, AI (chord-chart
    autopilot first), live session (latency architecture in
    docs/ARCHITECTURE.md), arranger — per docs/ROADMAP.md.

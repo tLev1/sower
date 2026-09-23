@@ -2,36 +2,70 @@
 
 > Working title: **stdBd** (name TBD — candidates: Adnoto, Selah, Jubal, Tabula)
 > Solo developer. Web-first (TypeScript/React), packaged for desktop/iPad later.
+> Status snapshot: **Phase 1a complete on the in-house engine** — see §Current
+> status. Handover details in `handover.md`, architecture in
+> `docs/ARCHITECTURE.md`, engine decision in `docs/ADRs/003-*`.
 
 ## Locked requirements
 
 - **Premium UX**: every interaction must feel smooth, snappy, deliberate. Design tokens, motion spec, 60fps score canvas. Direct manipulation (drag notes) + hum/sing correction are flagship interactions — prototype early.
 - **High-quality playback sounds** (explicit user requirement): premium sampled instrument sets, articulation-aware triggering (strum offsets, palm mutes, round-robin drums), NOT stock soundfonts. Architecture must allow plugging sample engines into `SynthEngine`.
-- **Latency (live input)**: AudioWorklet @ 128 samples, zero allocation in audio thread, note-on detection < 10ms, per-device calibration, two-stage display (instant echo → grid snap).
+- **Latency (live input)**: AudioWorklet @ 128 samples, zero allocation in audio thread, note-on < 10ms, per-device calibration, two-stage display (instant echo → grid snap).
 - **Clean architecture**: pure core, ports & adapters, event-sourced commands. Any subsystem replaceable without rippling.
+
+## Current status snapshot (2026-09)
+
+| Area | State |
+|---|---|
+| Core model + commands | ✅ immutable Score, branded ids, event-sourced commands incl. bar/tempo/meter editing, undo/redo |
+| Renderer | ✅ in-house SVG engraving engine (ADR-003): notation + TAB, Bravura/SMuFL, metrical beaming, ledger lines, accidentals, tempo marks |
+| Playback | ✅ WebAudio v1: Karplus-Strong plucked-string synth, articulation-aware, tempo map, look-ahead scheduler, latency-compensated playhead, fade pause/stop, play-from-selection |
+| Editing | ✅ fret entry 0-9 + two-digit (10-24), chord entry flow, caret navigation, measure +/−, undo/redo, IndexedDB autosave |
+| Transport | ✅ play/pause/stop, editable BPM, meter selector (applies from caret bar) |
+| Missing for Phase 1b | durations UI, articulation editing/rendering, notation-only toggle, import/export |
 
 ## Phases
 
-### Phase 0 — Foundation ✅ (started)
+### Phase 0 — Foundation ✅ (complete)
 - [x] Monorepo (pnpm workspaces), TS strict, ESLint strictTypeChecked, CI
 - [x] Core score model + event-sourced commands + tests
-- [x] Renderer abstraction + alphaTab adapter
+- [x] Renderer abstraction (`ScoreRenderer`/`ScorePlayer`/`ScoreInteraction`)
 - [x] Audio adapter contracts (SynthEngine, LatencyProbe)
 - [x] Design tokens package
-- [x] Vertical slice: demo score → render (alphaTab)
+- [x] Vertical slice: demo score → render
 
-### Phase 1a — Guitar tab editing (~8 wks)
+### Phase 1a — Guitar tab editing ✅ (complete — rebuilt on the in-house engine)
 - [x] Score document store (autosave, IndexedDB persistence)
 - [x] Undo/redo history over command stream
-- [x] Guitar TAB editing: add/remove notes, fret input, string selection (bar management next)
-- [x] Playback v1 (alphaSynth via alphaTab; per-track mixer next)
-- [x] Keyboard-first shortcuts (guitarist workflow: type frets 0-9, arrow keys navigate)
+- [x] **In-house engraving engine** (ADR-003 — alphaTab removed): SVG + Bravura,
+      notation + TAB, standard notation rules (metrical beaming per meter,
+      Gould stem rule, shared barlines, leger lines, seconds offsets,
+      key-aware accidentals, correct time-sig placement, notation overhang)
+- [x] Playback v1: Karplus-Strong synth (articulation-aware), strum stagger,
+      reverb + compressor; latency-compensated continuous playhead; smooth
+      measure transitions (absolute-tick knot track); play-from-selection;
+      fade pause/stop; vertical auto-scroll
+- [x] Guitar TAB editing: add/remove/replace notes, frets 0-9 + two-digit
+      entry (Ctrl+1/2 → 10-24), chord flow (place → ↓ returns to placed tick),
+      caret navigation, click-to-position hit-testing
+- [x] Measure management: append/remove via engine-drawn +/− controls
+- [x] Keyboard-first shortcuts (guitarist workflow)
+- [x] Transport: BPM field + meter selector (event-sourced `setBarTempo` /
+      `setTimeSignature`, undoable, tempo marks engraved)
+- [x] Scheduler/visual sync: primeBuffers, outputLatency compensation,
+      fractional playhead ticks, fade-out pause/stop
 
 ### Phase 1b — Notation + articulations (~4 wks)
-- [ ] Standard notation view toggle (same data)
-- [ ] Articulation editing (palm mute, bend, slide, hammer-on, vibrato, harmonics)
-- [ ] Export: MusicXML, MIDI, PDF
-- [ ] Import: Guitar Pro (.gp3-7), MIDI, MusicXML
+- [ ] Note-value selection (1/4, 1/2, whole, 16ths; dots; triplets) — beam
+      rules + secondary beams already support mixed values; needs duration
+      UI + `setNoteDuration` wiring + caret tick-spacing
+- [ ] Articulation editing (palm mute, bend, slide, hammer-on, vibrato,
+      harmonics, ties) — engraver marks (PM, bend arrows, slurs, vibrato
+      wavy line) + input controls
+- [ ] Notation-only view toggle (engine renders one staff per track)
+- [ ] Export: MusicXML, MIDI, PDF (print stylesheet)
+- [ ] Import: Guitar Pro (.gp3-7), MIDI, MusicXML — converters target the
+      core model directly (no alphaTex bridge anymore)
 
 ### Phase 1c — Flagship UX (~4 wks, prototype FIRST within this phase)
 - [ ] Direct note manipulation: drag pitch (vertical), drag duration edge (horizontal), snap
@@ -42,6 +76,8 @@
 - [ ] Accounts + cloud sync (Clerk/Supabase), free/Pro tiers, Stripe
 - [ ] Onboarding, sample songs, empty states
 - [ ] Practice tools: loop section, tempo %, metronome, tuner
+- [ ] Playback v2 groundwork: per-track mixer (Track model already has
+      volume/pan/mute/solo), premium sample engine seam
 
 ### Phase 3 — AI features (~10-14 wks)
 - [ ] **Chord-chart autopilot**: audio → chord lead sheet (first paywall)
@@ -77,3 +113,13 @@
 - Timebox hum-correction prototype to 2 weeks; pivot to drag-only if feel isn't there
 - "Sounds real?" playback checklist tested every sprint (producer-ear QA)
 
+## Engineering notes (current architecture decisions — see ADRs)
+- Renderer: **in-house engraving engine** (ADR-003) — never reintroduce a
+  third-party score renderer without revisiting the ADR.
+- Own immutable score model + event-sourced commands; MusicXML compatibility
+  via adapters (not MusicXML as internal format).
+- Web-first (TS/React), desktop/iPad shells later (Tauri likely).
+- Window-level keyboard handling; premium = consistency + motion +
+  zero-latency feedback, enforced via design tokens (`packages/ui`).
+- Monetization: freemium subscription; chord-chart autopilot = first AI
+  paywall; client-side WASM inference preferred (cost + privacy).
