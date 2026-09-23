@@ -163,6 +163,19 @@ Git repo on `main`; commit as you go (conventional commits).
   shared between bars, no gaps. Noteheads offset for unisons/seconds
   (`headDxs`); leger lines drawn beyond the staff (`legerPositions`);
   accidentals are key-aware with measure-scoped memory (`accidentalFor`).
+- **Playhead track**: the playhead moves on a piecewise-linear knot table
+  over ABSOLUTE ticks (`layout.playheadKnots` — one knot per beat column, a
+  trailing knot at each system's final barline). Segments within a system
+  run unbroken through shared barlines; line wraps step to the next system
+  at the boundary tick. `playheadAnchorAt(layout, absTick)` interpolates;
+  the player emits `absTick` (bar-start ticks + fractional tick). Clamping
+  the playhead per bar (old behavior) froze it at each bar's last beat and
+  teleported it across the barline — that was the measure-jump glitch.
+- Sync details: all pluck buffers are pre-generated on play
+  (`primeBuffers`); the emitted position is compensated by
+  `outputLatency + baseLatency` so the playhead tracks what the listener
+  HEARS; pause/stop fade out via the master gain (~110 ms) instead of
+  hard-cutting sources. Auto-scroll is vertical-only and smooth.
 
 ## 6. Critical gotchas (do not re-learn)
 

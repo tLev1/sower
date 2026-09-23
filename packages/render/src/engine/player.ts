@@ -18,6 +18,8 @@ import type { ScorePlayer } from "../renderer.js";
 export interface PlaybackPosition {
   readonly barIndex: number;
   readonly tick: number;
+  /** Absolute tick across the whole score (bar start + tick) — drives the playhead. */
+  readonly absTick: number;
   readonly seconds: number;
   readonly totalSeconds: number;
 }
@@ -44,6 +46,7 @@ export class WebAudioPlayer implements ScorePlayer {
   private readonly buses = new Map<number, GainNode>();
   private events: readonly NoteEvent[] = [];
   private barStarts: readonly number[] = [];
+  private barStartTicks: readonly number[] = [];
   private barTicks: readonly number[] = [];
   private barSeconds: readonly number[] = [];
   private totalSec = 0.001;
@@ -388,6 +391,7 @@ export class WebAudioPlayer implements ScorePlayer {
     return {
       barIndex,
       tick: Math.min(Math.max(0, tick), Math.max(0, ticks - 1)),
+      absTick: (this.barStartTicks[barIndex] ?? 0) + Math.min(Math.max(0, tick), Math.max(0, ticks - 1)),
       seconds: pos,
       totalSeconds: this.totalSec,
     };
@@ -465,20 +469,25 @@ export class WebAudioPlayer implements ScorePlayer {
   /** Rebuilds flattened note events + bar timing from the current score. */
   private rebuildTimeline(score: Score): void {
     const barStarts: number[] = [];
+    const barStartTicks: number[] = [];
     const barTicks: number[] = [];
     const barSeconds: number[] = [];
     let t = 0;
+    let ticksAcc = 0;
     let tempo = 120;
     for (const bar of score.bars) {
       if (bar.tempo !== null) tempo = bar.tempo;
       const ticks = ticksPerBar(bar.timeSignature);
       const secPerTick = 60 / (tempo * TICKS_PER_QUARTER);
       barStarts.push(t);
+      barStartTicks.push(ticksAcc);
       barTicks.push(ticks);
       barSeconds.push(ticks * secPerTick);
+      ticksAcc += ticks;
       t += ticks * secPerTick;
     }
     this.barStarts = barStarts;
+    this.barStartTicks = barStartTicks;
     this.barTicks = barTicks;
     this.barSeconds = barSeconds;
 

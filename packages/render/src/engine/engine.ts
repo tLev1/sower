@@ -1,10 +1,11 @@
 import type { Score } from "@stdbd/core";
 import type { ClickedPosition, ScoreInteraction, ScorePlayer, ScoreRenderer } from "../renderer.js";
 import {
+  absoluteTickOfBar,
   barRectAt,
   caretAnchor,
   computeLayout,
-  playheadAnchor,
+  playheadAnchorAt,
   positionAt,
   type LayoutDocument,
 } from "./layout.js";
@@ -46,7 +47,9 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   private readonly player: WebAudioPlayer;
   private positionHook: (() => void) | null = null;
   private caret: CaretPosition | null = null;
-  private playhead: { readonly barIndex: number; readonly tick: number } | null = null;
+  private playhead:
+    | { readonly barIndex: number; readonly tick: number; readonly absTick?: number }
+    | null = null;
   private lastDynMarkup = "";
   private lastScrollTarget = -1;
   private resizeObserver: ResizeObserver | null = null;
@@ -87,7 +90,9 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
 
     // the engine owns the playhead: track playback position internally
     this.positionHook = this.player.onPosition((pos) => {
-      this.setPlayhead(pos ? { barIndex: pos.barIndex, tick: pos.tick } : null);
+      this.setPlayhead(
+        pos ? { barIndex: pos.barIndex, tick: pos.tick, absTick: pos.absTick } : null,
+      );
     });
 
     void document.fonts.ready.then(() => {
@@ -176,7 +181,9 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   }
 
   /** Positions the playback playhead (glowing line through the staves). */
-  setPlayhead(position: { readonly barIndex: number; readonly tick: number } | null): void {
+  setPlayhead(position:
+    | { readonly barIndex: number; readonly tick: number; readonly absTick?: number }
+    | null): void {
     this.playhead = position;
     this.renderOverlays();
   }
@@ -288,7 +295,9 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     if (!(dyn instanceof SVGGElement)) return;
     let markup = "";
     if (this.playhead) {
-      const anchor = playheadAnchor(layout, this.playhead.barIndex, this.playhead.tick);
+      const absTick = this.playhead.absTick ??
+        absoluteTickOfBar(this.score ?? layout.score, this.playhead.barIndex) + this.playhead.tick;
+      const anchor = playheadAnchorAt(layout, absTick);
       if (anchor) {
         markup +=
           `<rect x="${round2(anchor.x - 16)}" y="${round2(anchor.top)}" width="32" height="${round2(anchor.bottom - anchor.top)}"` +
@@ -319,7 +328,9 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
    */
   private autoScroll(): void {
     if (!this.playhead || !this.layout) return;
-    const anchor = playheadAnchor(this.layout, this.playhead.barIndex, this.playhead.tick);
+    const absTick = this.playhead.absTick ??
+      absoluteTickOfBar(this.score ?? this.layout.score, this.playhead.barIndex) + this.playhead.tick;
+    const anchor = playheadAnchorAt(this.layout, absTick);
     const scroller = this.container.closest(".score-scroll");
     if (!anchor || !(scroller instanceof HTMLElement)) return;
     const st = scroller.scrollTop;

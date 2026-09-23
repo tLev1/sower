@@ -6,6 +6,7 @@ import {
   caretAnchor,
   computeLayout,
   groupIntoBeats,
+  playheadAnchorAt,
   positionAt,
 } from "../src/engine/layout.js";
 
@@ -164,6 +165,36 @@ describe("computeLayout", () => {
     expect(ids[4]).toBe(ids[5]);
     expect(ids[5]).toBe(ids[6]);
     expect(ids[6]).toBe(ids[7]);
+  });
+
+  it("moves the playhead continuously across the barline", () => {
+    const score = buildScore();
+    const layout = computeLayout(score, { width: 1200 });
+    const barStart2 = TICKS_PER_QUARTER * 4; // bar 2 starts at abs tick 1920
+    const before = playheadAnchorAt(layout, barStart2 - TICKS_PER_QUARTER / 16);
+    const at = playheadAnchorAt(layout, barStart2);
+    const after = playheadAnchorAt(layout, barStart2 + TICKS_PER_QUARTER / 16);
+    expect(before).not.toBeNull();
+    expect(at).not.toBeNull();
+    expect(after).not.toBeNull();
+    // around the boundary the x must keep moving forward, no freeze/teleport:
+    // x(after) - x(before) should be a fraction of a beat width, same direction
+    const span = (at?.x ?? 0) - (before?.x ?? 0);
+    const span2 = (after?.x ?? 0) - (at?.x ?? 0);
+    expect(span).toBeGreaterThan(0);
+    expect(span2).toBeGreaterThan(0);
+    expect(Math.abs(span)).toBeLessThan(TICKS_PER_QUARTER);
+  });
+
+  it("clamps the playhead to the track ends", () => {
+    const score = buildScore();
+    const layout = computeLayout(score, { width: 1200 });
+    const total = TICKS_PER_QUARTER * 4 * score.bars.length;
+    const end = playheadAnchorAt(layout, total + 10000);
+    const start = playheadAnchorAt(layout, -100);
+    expect(end).not.toBeNull();
+    expect(start).not.toBeNull();
+    expect(end?.x).toBeGreaterThanOrEqual((start?.x ?? 0));
   });
 });
 

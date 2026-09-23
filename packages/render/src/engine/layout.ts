@@ -92,6 +92,47 @@ export interface LayoutDocument {
   readonly systems: readonly SystemBox[];
   readonly height: number;
   readonly hasHeader: boolean;
+  /** (absTick → x) knots along the playhead track, in layout order. */
+  readonly playheadKnots: readonly PlayheadKnot[];
+}
+
+/** One interpolation point of the playhead's x over absolute tick time. */
+export interface PlayheadKnot {
+  readonly absTick: number;
+  readonly x: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/**
+ * Builds the playhead knot table: one knot per beat column, plus a trailing
+ * knot at each system's final barline (so line wraps step to the next
+ * system exactly at the boundary tick). Within a system the segment from a
+ * bar's last beat to the next bar's first beat is unbroken — the playhead
+ * crosses shared barlines without freezing or teleporting.
+ */
+function buildPlayheadTrack(score: Score, systems: readonly SystemBox[], tabGap: number): PlayheadKnot[] {
+  const knots: PlayheadKnot[] = [];
+  for (const system of systems) {
+    const tb = system.bars[0]?.tracks[0];
+    if (!tb) continue;
+    const top = tb.notation ? tb.staffTop - 8 : tb.tabTop - 8;
+    const bottom = tb.tab && tb.stringCount > 0
+      ? tb.tabTop + (tb.stringCount - 1) * tabGap + 8
+      : tb.staffTop + STAFF_SPACE * 4 + 8;
+    for (const bar of system.bars) {
+      const barAbs = absoluteTickOfBar(score, bar.index);
+      for (const beat of bar.tracks[0]?.beats ?? []) {
+        knots.push({ absTick: barAbs + beat.start, x: beat.x, top, bottom });
+      }
+      const cap = ticksPerBar(bar.bar.timeSignature);
+      const isLastOfSystem = system.bars[system.bars.length - 1]?.index === bar.index;
+      if (isLastOfSystem) {
+        knots.push({ absTick: barAbs + cap, x: bar.x1 - 2, top, bottom });
+      }
+    }
+  }
+  return knots;
 }
 
 /** Click on the score resolved into core-model coordinates. */
@@ -537,6 +578,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     systems,
     height: Math.max(yCursor + staffSpace * 1.2, staffSpace * 14),
     hasHeader: groups.length > 0,
+    playheadKnots: buildPlayheadTrack(score, systems, tabGap),
   };
 }
 
@@ -651,22 +693,37 @@ export function caretAnchor(
   return { x: xAtTick(bar, tick), y: middleY, top: tb.staffTop - 6, bottom: tb.staffTop + layout.staffSpace * 4 + 6 };
 }
 
-/** Playhead anchor (x position for a tick, spanning the first track's staves). */
-export function playheadAnchor(
+/** Playhead anchor for an absolute tick — piecewise-linear along a knot table
+ * built from the beat columns, so the playhead glides continuously THROUGH
+ * barlines (and steps cleanly to the next system when lines wrap). */
+export function playheadAnchorAt(
   layout: LayoutDocument,
-  barIndex: number,
-  tick: number,
+  absTick: number,
 ): { x: number; top: number; bottom: number } | null {
-  const found = findBarBox(layout, barIndex);
-  if (!found) return null;
-  const { bar } = found;
-  const tb = bar.tracks[0];
-  if (!tb) return null;
-  const top = tb.notation ? tb.staffTop - 8 : tb.tabTop - 8;
-  const bottom = tb.tab && tb.stringCount > 0
-    ? tb.tabTop + (tb.stringCount - 1) * layout.tabLineGap + 8
-    : tb.staffTop + layout.staffSpace * 4 + 8;
-  return { x: xAtTick(bar, tick), top, bottom };
+  const knots = layout.playheadKnots;
+  if (knots.length === 0) return null;
+  const first = knots[0];
+  const last = knots[knots.length - 1];
+  if (!first || !last) return null;
+  if (absTick <= first.absTick) return { x: first.x, top: first.top, bottom: first.bottom };
+  if (absTick >= last.absTick) return { x: last.x, top: last.top, bottom: last.bottom };
+  let lo = 0;
+  let hi = knots.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const k = knots[mid];
+    if (k && k.absTick <= absTick) lo = mid;
+    else hi = mid - 1;
+  }
+  const a = knots[lo];
+  const b = knots[lo + 1];
+  if (!a || !b) return { x: a?.x ?? first.x, top: a?.top ?? 0, bottom: a?.bottom ?? 0 };
+  if (b.absTick <= a.absTick) {
+    // system wrap: step to the next line's first beat
+    return { x: b.x, top: b.top, bottom: b.bottom };
+  }
+  const t = (absTick - a.absTick) / (b.absTick - a.absTick);
+  return { x: a.x + (b.x - a.x) * t, top: a.top, bottom: a.bottom };
 }
 
 /** Visual bounds of a bar (all staves of its system block). */
