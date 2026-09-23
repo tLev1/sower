@@ -138,9 +138,13 @@ Git repo on `main`; commit as you go (conventional commits).
   translates via `staticSvg.getBoundingClientRect()`.
 - Overlays (caret/playhead) live in a separate overlay SVG layered above the
   static score SVG — re-rendered cheaply, pointer-events: none.
-- Beam groups: consecutive equal-duration notes ≤ eighth within the same
-  quarter beat; stems up when the group's average staff position is below the
-  middle line, down otherwise.
+- Beam groups follow meter conventions (`beamGroupSize`): 4/4 beams eighths
+  in groups of 4 (half-bar), 3/4 in 3, 2/4 in 2, compound (6/8) in 3 per
+  dotted beat. Stem direction per Gould's rule: the note farthest from the
+  middle line decides (ties up). Measures are contiguous — barlines are
+  shared between bars, no gaps. Noteheads offset for unisons/seconds
+  (`headDxs`); leger lines drawn beyond the staff (`legerPositions`);
+  accidentals are key-aware with measure-scoped memory (`accidentalFor`).
 
 ## 6. Critical gotchas (do not re-learn)
 

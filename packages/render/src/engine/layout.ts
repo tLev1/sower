@@ -67,7 +67,10 @@ export interface BarBox {
   /** Right edge — the barline closing this bar. */
   readonly x1: number;
   readonly timeSignature: { readonly numerator: number; readonly denominator: number } | null;
+  /** Key fifths drawn at this bar's start (only when displayed). */
   readonly keyFifths: number | null;
+  /** Key fifths in effect for this bar (accidental logic). */
+  readonly fifths: number;
   readonly tracks: readonly TrackBar[];
   /** True when this bar opens its system (clef/key/time are drawn). */
   readonly systemStart: boolean;
@@ -230,7 +233,7 @@ function trackLayouts(score: Score, tabGap: number): TrackLayout[] {
   });
 }
 
-/** Width reserved left of the first bar's content (clef + key + time). */
+/** Width reserved left of the first bar's content (clef + key + time columns). */
 function systemLeadWidth(
   _hasNotation: boolean,
   _hasTab: boolean,
@@ -238,9 +241,10 @@ function systemLeadWidth(
   showTime: boolean,
   staffSpace: number,
 ): number {
-  // clef ~2.2 spaces + key accidentals + time sig block + margins
-  let lead = staffSpace * 6.4;
-  lead += Math.abs(fifths) * staffSpace * 0.9;
+  // clef column ~4.6 spaces (Bravura gClef8vb is wide) + key accidentals
+  // + time block ~2.6 spaces + margin before the first beat
+  let lead = staffSpace * 8.6;
+  lead += Math.abs(fifths) * staffSpace * 0.95;
   if (!showTime) lead -= staffSpace * 2.6;
   return lead;
 }
@@ -255,10 +259,26 @@ function effectiveTimeSig(score: Score, barIndex: number): Bar["timeSignature"] 
   return sig;
 }
 
-/** Assigns beam-group ids to runs of equal, short, non-rest beats. */
-function assignBeamGroups(seeds: readonly BeatSeed[]): number[] {
+/**
+ * Eighth-note beam group size per meter (standard engraving practice,
+ * cf. Gould "Behind Bars"): 4/4 → 4 (half-bar), 3/4 → 3, 2/4 → 2,
+ * compound meters (6/8, 9/8, 12/8) → 3 per dotted-quarter beat.
+ */
+export function beamGroupSize(ts: { readonly numerator: number; readonly denominator: number }): number {
+  if (ts.denominator === 8 && ts.numerator % 3 === 0) return 3;
+  if (ts.denominator === 4) return Math.min(Math.max(ts.numerator, 2), 4);
+  return 4;
+}
+
+/**
+ * Assigns beam-group ids to runs of equal, short, non-rest beats that start
+ * within the same metrical group slot (per the time signature's beam group
+ * size). Rests and longer values break the run.
+ */
+function assignBeamGroups(seeds: readonly BeatSeed[], groupTicks: number): number[] {
   const ids = seeds.map(() => -1);
   const EIGHTH = TICKS_PER_QUARTER / 2;
+  const slotOf = (start: number): number => Math.floor(start / Math.max(groupTicks, 1));
   let nextId = 0;
   let i = 0;
   while (i < seeds.length) {
@@ -267,20 +287,20 @@ function assignBeamGroups(seeds: readonly BeatSeed[]): number[] {
       i++;
       continue;
     }
-    const quarterStart = Math.floor(seed.start / TICKS_PER_QUARTER) * TICKS_PER_QUARTER;
+    const slot = slotOf(seed.start);
     let j = i;
     while (
       j < seeds.length &&
       !seeds[j]?.isRest &&
       seeds[j]?.duration === seed.duration &&
-      Math.floor((seeds[j]?.start ?? -1) / TICKS_PER_QUARTER) * TICKS_PER_QUARTER === quarterStart
+      slotOf(seeds[j]?.start ?? -1) === slot
     ) {
       j++;
     }
     if (j - i >= 2) {
       for (let k = i; k < j; k++) {
-        const slot = ids[k];
-        if (slot !== undefined) ids[k] = nextId;
+        const target = ids[k];
+        if (target !== undefined) ids[k] = nextId;
       }
       nextId++;
     }
@@ -298,7 +318,6 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
   const tabGap = TAB_LINE_GAP;
   const padding = params.padding ?? staffSpace * 3.4;
   const contentWidth = Math.max(params.width - padding * 2, staffSpace * 16);
-  const barGap = staffSpace * 1.2;
   const HEADER_HEIGHT = 104;
   const minBarWidth = staffSpace * 4.6;
 
@@ -343,7 +362,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
         prev.timeSignature.denominator !== bar.timeSignature.denominator);
   };
 
-  // --- Pass 1: wrap bars into systems (greedy). ---
+  // --- Pass 1: wrap bars into systems (greedy; measures are contiguous). ---
   const groups: number[][] = [];
   {
     let group: number[] = [];
@@ -352,14 +371,14 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
       const lead = group.length === 0
         ? systemLeadWidth(hasNotation, hasTab, fifthsPerBar[i] ?? 0, showTimeAt(i), staffSpace)
         : 0;
-      const need = Math.max(baseWidths[i] ?? 0, minBarWidth) + lead + barGap;
+      const need = Math.max(baseWidths[i] ?? 0, minBarWidth) + lead;
       if (group.length > 0 && acc + need > contentWidth) {
         groups.push(group);
         group = [];
         acc = 0;
       }
       group.push(i);
-      acc += Math.max(baseWidths[i] ?? 0, minBarWidth) + barGap;
+      acc += Math.max(baseWidths[i] ?? 0, minBarWidth);
     }
     if (group.length > 0) groups.push(group);
   }
@@ -393,7 +412,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     const blockHeight = cursorY - contentTop;
     const systemHeight = headerBlock + topGap + blockHeight + staffSpace * 1.5;
 
-    // Stretch bar contents to fill the system width.
+    // Stretch bar contents to fill the system width (measures share barlines).
     const firstBarIndex = barIndexes[0] ?? 0;
     const lead = systemLeadWidth(
       hasNotation,
@@ -404,7 +423,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     );
     const widths = barIndexes.map((bi) => Math.max(baseWidths[bi] ?? 0, minBarWidth));
     const totalContent = widths.reduce((a, b) => a + b, 0);
-    const available = contentWidth - barGap * (barIndexes.length - 1) - lead;
+    const available = contentWidth - lead;
     const scale = totalContent > 0 ? Math.max(available / totalContent, 0.55) : 1;
     const stretched = widths.map((w) => w * scale);
 
@@ -421,6 +440,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
       const innerW = stretched[k] ?? 0;
       const x1 = contentX + innerW;
 
+      const groupTicks = beamGroupSize(bar.timeSignature) * (TICKS_PER_QUARTER / 2);
       const trackBars: TrackBar[] = tracks.map((info, t) => {
         const geom = geoms[t];
         if (!geom) throw new Error("layout geometry missing for track");
@@ -428,7 +448,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
         const rawW = entries.reduce((a, e) => a + e.width, 0);
         const ts = rawW > 0 ? innerW / rawW : 1;
         let bx = contentX;
-        const beams = assignBeamGroups(entries.map((e) => e.seed));
+        const beams = assignBeamGroups(entries.map((e) => e.seed), groupTicks);
         const beats: Beat[] = entries.map((entry, idx) => {
           const w = entry.width * ts;
           const beat: Beat = {
@@ -462,10 +482,11 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
         x1,
         timeSignature: k === 0 ? (effectiveTimeSig(score, bi) ?? bar.timeSignature) : null,
         keyFifths: k === 0 ? (fifthsPerBar[bi] ?? 0) : null,
+        fifths: fifthsPerBar[bi] ?? 0,
         tracks: trackBars,
         systemStart: k === 0,
       });
-      xCursor = x1 + barGap;
+      xCursor = x1; // measures are contiguous — the barline is shared
     }
 
     systems.push({ index: s, y: yCursor, height: systemHeight, bars });
@@ -512,15 +533,17 @@ function xAtTick(bar: BarBox, tick: number): number {
   const first = beats[0];
   const last = beats[beats.length - 1];
   if (first && tick <= first.start) {
-    return Math.max(bar.x0 + 4, first.x - first.width * 0.45);
+    return first.x; // exactly on the first note/rest column
   }
   if (last && tick >= last.start) {
-    return Math.min(bar.x1 - 4, last.x + last.width * 0.45);
+    return Math.min(bar.x1 - 4, last.x);
   }
   for (let i = 0; i < beats.length - 1; i++) {
     const a = beats[i];
     const b = beats[i + 1];
     if (a && b && tick >= a.start && tick <= b.start) {
+      if (tick === a.start) return a.x;
+      if (tick === b.start) return b.x;
       const span = b.start - a.start;
       const t = span > 0 ? (tick - a.start) / span : 0;
       return a.x + (b.x - a.x) * t;

@@ -1,6 +1,6 @@
 ﻿import type { Note } from "@stdbd/core";
 import type { BarBox, LayoutDocument, TrackBar } from "./layout.js";
-import { durationClass, type DurationClass } from "./layout.js";
+import { durationClass, keyAlteredPcs, type DurationClass } from "./layout.js";
 import { G, MUSIC_FONT } from "./smufl.js";
 import { engravingTheme } from "./theme.js";
 
@@ -181,7 +181,7 @@ function drawTrackBar(bar: BarBox, tb: TrackBar, S: number, isFinal: boolean, pa
 
   if (bar.systemStart) drawSystemHeader(bar, tb, S, parts);
   drawBarNumber(bar, tb, S, parts);
-  drawNotation(tb, S, parts);
+  drawNotation(bar, tb, S, parts);
   drawTabNumbers(bar, tb, parts);
 
   if (isFinal) {
@@ -211,7 +211,7 @@ function drawSystemHeader(bar: BarBox, tb: TrackBar, S: number, parts: string[])
   if (tb.notation) {
     const isBass = tb.track.clef === "f4";
     parts.push(
-      glyph(isBass ? G.fClef : G.gClef8vb, bar.x0 + S * 0.55, isBass ? tb.staffTop + S : tb.staffTop + S * 3, {
+      glyph(isBass ? G.fClef : G.gClef8vb, bar.x0 + S * 0.3, isBass ? tb.staffTop + S : tb.staffTop + S * 3, {
         size: S * 4,
         anchor: "start",
         cls: "stdb-clef",
@@ -229,13 +229,13 @@ function drawKeySignature(bar: BarBox, tb: TrackBar, S: number, parts: string[])
   const isSharp = fifths > 0;
   const midis = isSharp ? KEY_SIG_SHARP : KEY_SIG_FLAT;
   const count = Math.min(Math.abs(fifths), 7);
-  const x0 = bar.x0 + S * 3.2;
+  const x0 = bar.x0 + S * 4.7;
   for (let i = 0; i < count; i++) {
     const midi = midis[i] ?? 71;
     const pos = staffPos(midi, true);
     const y = tb.staffTop + S * 2 - pos * (S / 2);
     parts.push(
-      glyph(isSharp ? G.accidentalSharp : G.accidentalFlat, x0 + i * S * 0.9, y, {
+      glyph(isSharp ? G.accidentalSharp : G.accidentalFlat, x0 + i * S * 0.95, y, {
         size: S * 2.7,
         anchor: "middle",
         cls: "stdb-key-accidental",
@@ -251,7 +251,7 @@ function drawTimeSignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]
   const num = String(ts.numerator);
   const den = String(ts.denominator);
   const block = Math.max(num.length, den.length) * digitW;
-  const x = bar.x0 + S * 3.2 + Math.abs(bar.keyFifths ?? 0) * S * 0.9 + S * 1.1;
+  const x = bar.x0 + S * 4.7 + Math.abs(bar.keyFifths ?? 0) * S * 0.95 + S * 0.7;
   const numX = x + (block - num.length * digitW) / 2;
   const denX = x + (block - den.length * digitW) / 2;
   for (let i = 0; i < num.length; i++) {
@@ -268,8 +268,9 @@ function drawTimeSignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]
 // Notation beats â€” rests, chords, stems, beams, flags
 // ---------------------------------------------------------------------------
 
-function drawNotation(tb: TrackBar, S: number, parts: string[]): void {
+function drawNotation(bar: BarBox, tb: TrackBar, S: number, parts: string[]): void {
   const middleY = tb.staffTop + S * 2;
+  const accidentalState = new Map<number, AccidentalKind | null>();
 
   const beamGroups = new Map<number, number[]>();
   tb.beats.forEach((beat, idx) => {
@@ -287,7 +288,7 @@ function drawNotation(tb: TrackBar, S: number, parts: string[]): void {
     }
     const group = beamGroups.get(beat.beamId) ?? null;
     const beamed = group !== null && group.length >= 2;
-    drawChord(beat, S, middleY, parts, beamed);
+    drawChord(beat, S, middleY, parts, beamed, bar.fifths, accidentalState);
   });
 
   for (const group of beamGroups.values()) {
@@ -308,8 +309,65 @@ function drawRestGlyph(
     dc === "eighth" ? G.rest8th :
     dc === "16th" ? G.rest16th :
     dc === "32nd" ? G.rest32nd : G.restQuarter;
-  const y = dc === "whole" ? middleY - S : dc === "half" ? middleY : middleY;
+  const y = dc === "whole" ? middleY - S : middleY;
   parts.push(glyph(cp, beat.x, y, { size: S * 4, anchor: "middle", fill: engravingTheme.secondaryColor, cls: "stdb-rest" }));
+}
+
+type AccidentalKind = "sharp" | "flat" | "natural";
+
+const ACCIDENTAL_CP: Record<AccidentalKind, number> = {
+  sharp: G.accidentalSharp,
+  flat: G.accidentalFlat,
+  natural: G.accidentalNatural,
+};
+
+/** Default accidental a pc carries under the key signature (null = natural). */
+function keyDefaultFor(pc: number, fifths: number): AccidentalKind | null {
+  if (!keyAlteredPcs(fifths).has(pc)) return null;
+  return fifths >= 0 ? "sharp" : "flat";
+}
+
+/** Accidental a note needs in this bar, or null when none is required. */
+function accidentalFor(midi: number, fifths: number): AccidentalKind | null {
+  const pc = ((midi % 12) + 12) % 12;
+  const altered = pc === 1 || pc === 3 || pc === 6 || pc === 8 || pc === 10;
+  if (altered) {
+    if (keyAlteredPcs(fifths).has(pc)) return null; // already altered by the key
+    if (fifths > 0) return "sharp";
+    if (fifths < 0) return "flat";
+    return pc === 1 || pc === 6 ? "sharp" : "flat";
+  }
+  return keyAlteredPcs(fifths).has(pc) ? "natural" : null;
+}
+
+/** Even staff positions of leger lines crossed by a note at `pos`. */
+function legerPositions(pos: number): number[] {
+  const lines: number[] = [];
+  if (pos >= 6) {
+    for (let lp = 6; lp <= pos; lp += 2) lines.push(lp);
+  } else if (pos <= -6) {
+    for (let lp = -6; lp >= pos; lp -= 2) lines.push(lp);
+  }
+  return lines;
+}
+
+/**
+ * Horizontal notehead offsets: unisons and seconds (adjacent staff
+ * positions) are offset to the stem side — standard engraving practice.
+ */
+function headDxs(positions: readonly number[], stemUp: boolean, S: number): number[] {
+  const dxs = positions.map(() => 0);
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[i] ?? 0;
+    for (let j = 0; j < i; j++) {
+      const prev = positions[j] ?? 0;
+      if (Math.abs(pos - prev) <= 1 && dxs[j] === 0) {
+        dxs[i] = stemUp ? S * 0.69 : -S * 0.69;
+        break;
+      }
+    }
+  }
+  return dxs;
 }
 
 function drawChord(
@@ -318,26 +376,46 @@ function drawChord(
   middleY: number,
   parts: string[],
   beamed: boolean,
+  fifths: number,
+  accidentalState: Map<number, AccidentalKind | null>,
 ): void {
   const notes = beat.notes;
   if (notes.length === 0) return;
   const isGuitar = notes.some((n) => n.string !== null && n.fret !== null);
   const positions = notes.map((n) => staffPos(n.pitch, isGuitar));
-  const avg = positions.reduce((a, b) => a + b, 0) / positions.length;
-  const stemUp = avg <= 0;
+  // the note farthest from the middle line decides the stem direction
+  const maxPos = Math.max(...positions);
+  const minPos = Math.min(...positions);
+  const stemUp = -minPos >= maxPos;
+  const dxs = headDxs(positions, stemUp, S);
   const dc = durationClass(beat.duration);
   const headCp = dc === "whole" ? G.noteheadWhole : dc === "half" ? G.noteheadHalf : G.noteheadBlack;
   const stemXs: number[] = [];
   const tipYs: number[] = [];
-  const seen = new Set<number>();
-  notes.forEach((_note, i) => {
+  notes.forEach((note, i) => {
     const pos = positions[i] ?? 0;
-    let dx = 0;
-    if (seen.has(pos)) dx = stemUp ? S * 0.69 : -S * 0.69;
-    seen.add(pos);
+    const dx = dxs[i] ?? 0;
     const y = middleY - pos * (S / 2);
+    // leger lines for notes beyond the staff
+    for (const lp of legerPositions(pos)) {
+      const ly = middleY - lp * (S / 2);
+      parts.push(line(beat.x + dx - S * 1.05, ly, beat.x + dx + S * 1.05, ly, engravingTheme.staffColor, 1.1));
+    }
+    // accidental — measure-scoped memory keyed by staff position
+    const desired = accidentalFor(note.pitch, fifths);
+    const current = accidentalState.get(pos) ?? keyDefaultFor(((note.pitch % 12) + 12) % 12, fifths);
+    if (desired !== null && desired !== current) {
+      parts.push(
+        glyph(ACCIDENTAL_CP[desired], beat.x + dx - S * 1.35, y, {
+          size: S * 2.7,
+          anchor: "middle",
+          cls: "stdb-accidental",
+        }),
+      );
+      accidentalState.set(pos, desired);
+    }
     parts.push(glyph(headCp, beat.x + dx, y, { size: S * 4, anchor: "middle", cls: "stdb-notehead" }));
-    if (dc === "whole") return;
+    if (beamed || dc === "whole") return; // stems/beams come from drawBeam
     const stemX = beat.x + dx + (stemUp ? S * STEM_ATTACH : -S * STEM_ATTACH);
     const tipY = stemUp ? y - STEM_LEN * S : y + STEM_LEN * S;
     parts.push(line(stemX, y, stemX, tipY, engravingTheme.beamColor, S * STEM_W));
@@ -360,36 +438,52 @@ function drawBeam(
   middleY: number,
   parts: string[],
 ): void {
-  const stems: { x: number; tipY: number; dc: DurationClass }[] = [];
-  let posSum = 0;
-  let posCount = 0;
+  interface Stem {
+    readonly x: number;
+    readonly headY: number;
+    readonly dc: DurationClass;
+  }
+  const collected: { beat: (typeof beats)[number]; positions: number[]; dc: DurationClass }[] = [];
   for (const idx of group) {
     const beat = beats[idx];
     if (!beat) continue;
     const notes = beat.notes;
     const isGuitar = notes.some((n) => n.string !== null && n.fret !== null);
     const positions = notes.map((n) => staffPos(n.pitch, isGuitar));
-    posSum += positions.reduce((a, b) => a + b, 0);
-    posCount += positions.length;
-    const extreme = Math.min(...positions);
-    const headY = middleY - extreme * (S / 2);
-    const stemX = beat.x + S * STEM_ATTACH;
-    const tipY = headY - STEM_LEN * S;
-    stems.push({ x: stemX, tipY, dc: durationClass(beat.duration) });
+    collected.push({ beat, positions, dc: durationClass(beat.duration) });
   }
-  if (stems.length < 2) return;
-  const avg = posCount > 0 ? posSum / posCount : 0;
-  const stemUp = avg <= 0;
-  for (const s of stems) {
-    s.tipY = stemUp ? s.tipY : s.tipY + 2 * STEM_LEN * S; // flip below the head
-  }
+  if (collected.length < 2) return;
+  // Gould's rule: the note farthest from the middle line determines the stem
+  // direction of the whole beam group (ties go up).
+  const allPositions = collected.flatMap((c) => c.positions);
+  const maxPos = Math.max(...allPositions);
+  const minPos = Math.min(...allPositions);
+  const stemUp = -minPos >= maxPos;
+  const attach = (stemUp ? S * STEM_ATTACH : -S * STEM_ATTACH);
+
+  const stems: Stem[] = collected.map(({ beat, positions, dc }) => {
+    const extreme = stemUp ? Math.min(...positions) : Math.max(...positions);
+    const dxs = headDxs(positions, stemUp, S);
+    const extremeIdx = positions.indexOf(extreme);
+    const dx = extremeIdx >= 0 ? (dxs[extremeIdx] ?? 0) : 0;
+    return { x: beat.x + dx + attach, headY: middleY - extreme * (S / 2), dc };
+  });
+
   const first = stems[0];
   const last = stems[stems.length - 1];
   if (!first || !last) return;
+  const firstTip = first.headY + (stemUp ? -STEM_LEN * S : STEM_LEN * S);
+  const lastTip = last.headY + (stemUp ? -STEM_LEN * S : STEM_LEN * S);
   const span = Math.max(last.x - first.x, 1);
-  const dyTotal = Math.max(-span * 0.3, Math.min(span * 0.3, last.tipY - first.tipY));
-  const slope = dyTotal / Math.max(last.x - first.x, 1e-6);
-  const beamY = (x: number): number => first.tipY + slope * (x - first.x);
+  const dyTotal = Math.max(-span * 0.3, Math.min(span * 0.3, lastTip - firstTip));
+  const slope = dyTotal / span;
+  const beamY = (x: number): number => firstTip + slope * (x - first.x);
+
+  // stems reach exactly to the beam line at their x
+  for (const stem of stems) {
+    parts.push(line(stem.x, stem.headY, stem.x, beamY(stem.x), engravingTheme.beamColor, S * STEM_W));
+  }
+
   const thickness = S * BEAM_THICKNESS;
   const gap = S * BEAM_GAP;
   const edge = stemUp ? thickness : -thickness;

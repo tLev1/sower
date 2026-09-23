@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Score } from "@stdbd/core";
 import { STANDARD_GUITAR_TUNING, TICKS_PER_QUARTER } from "@stdbd/core";
 import {
+  beamGroupSize,
   caretAnchor,
   computeLayout,
   groupIntoBeats,
@@ -100,6 +101,16 @@ describe("groupIntoBeats", () => {
   });
 });
 
+describe("beamGroupSize", () => {
+  it("follows standard meter conventions", () => {
+    expect(beamGroupSize({ numerator: 4, denominator: 4 })).toBe(4);
+    expect(beamGroupSize({ numerator: 3, denominator: 4 })).toBe(3);
+    expect(beamGroupSize({ numerator: 2, denominator: 4 })).toBe(2);
+    expect(beamGroupSize({ numerator: 6, denominator: 8 })).toBe(3);
+    expect(beamGroupSize({ numerator: 12, denominator: 8 })).toBe(3);
+  });
+});
+
 describe("computeLayout", () => {
   it("lays out beats left to right inside systems", () => {
     const score = buildScore();
@@ -117,7 +128,7 @@ describe("computeLayout", () => {
     }
   });
 
-  it("aligns tab and notation beats at the same x", () => {
+  it("renders both notation and tab staves for fretted tracks", () => {
     const score = buildScore();
     const layout = computeLayout(score, { width: 1200 });
     const bar = layout.systems[0]?.bars[0];
@@ -126,6 +137,33 @@ describe("computeLayout", () => {
     expect(tb.notation).toBe(true);
     expect(tb.tab).toBe(true);
     expect(tb.beats.length).toBeGreaterThan(0);
+  });
+
+  it("keeps measures contiguous (shared barlines, no gaps)", () => {
+    const score = buildScore();
+    const layout = computeLayout(score, { width: 1200 });
+    const system = layout.systems[0];
+    if (!system) return;
+    for (let i = 1; i < system.bars.length; i++) {
+      const prev = system.bars[i - 1];
+      const curr = system.bars[i];
+      if (prev && curr) expect(curr.x0).toBe(prev.x1);
+    }
+  });
+
+  it("beams eighths in metrical groups (4/4 → groups of 4)", () => {
+    const score = buildScore();
+    const layout = computeLayout(score, { width: 1200 });
+    const beats = layout.systems[0]?.bars[0]?.tracks[0]?.beats ?? [];
+    const ids = beats.map((b) => b.beamId);
+    // beats 0-3 share a group; beats 4-7 share another
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[1]).toBe(ids[2]);
+    expect(ids[2]).toBe(ids[3]);
+    expect(ids[3]).not.toBe(ids[4]);
+    expect(ids[4]).toBe(ids[5]);
+    expect(ids[5]).toBe(ids[6]);
+    expect(ids[6]).toBe(ids[7]);
   });
 });
 
@@ -166,5 +204,12 @@ describe("caretAnchor", () => {
     const tb = layout.systems[0]?.bars[0]?.tracks[0];
     expect(anchor?.y).toBe((tb?.tabTop ?? 0) + 5 * layout.tabLineGap);
     expect(anchor?.x).toBeGreaterThan(0);
+  });
+
+  it("places the caret exactly on the first beat column at tick 0", () => {
+    const beat = layout.systems[0]?.bars[0]?.tracks[0]?.beats[0];
+    const anchor = caretAnchor(layout, 0, 0, 0);
+    expect(beat).toBeDefined();
+    expect(anchor?.x).toBe(beat?.x);
   });
 });
