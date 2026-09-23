@@ -126,6 +126,10 @@ Git repo on `main`; commit as you go (conventional commits).
   place frets, ↑/↓ string moves with chord-return, ←/→ grid steps, Backspace,
   Ctrl+Z/Y). Document autosaves to IndexedDB (600ms debounce), restores on
   reload. Bar highlight replaced by the engine caret.
+- **Measure management**: engine-drawn "+/−" buttons after the final barline
+  (SVG, hit-testable, − hidden at 1 bar); `addBar`/`removeBar` commands in
+  core; the id allocator seeds from the score and re-syncs on reset (avoids
+  id collisions with loaded data — removeBar used to delete two bars).
 
 ## 5b. Engine architecture notes (for future work)
 
@@ -153,9 +157,11 @@ Git repo on `main`; commit as you go (conventional commits).
    The app must never import `packages/render/src/engine/*` files directly;
    go through `@stdbd/render`'s public API (`StdbdEngine`).
 2. **SMuFL glyph alignment**: music glyphs are drawn at font-size = staff
-   height (4 × staffSpace); text-anchor `middle` centers them. Time sig
-   digits' baselines sit on staff lines 2/4 (numerator/denominator).
-   TAB numbers need `+4.8px` baseline offset at font-size 13.5.
+   height (4 × staffSpace); text-anchor `middle` centers them. Time-sig
+   digits are baseline-centered and span ±1 staff space (verified via canvas
+   TextMetrics) — numerator baseline at staffTop + 1S, denominator at +3S;
+   one digit ≈ 1.9 spaces wide. TAB numbers need `+4.8px` baseline offset at
+   font-size 13.5.
 3. **Guitar pitch convention**: notation staff positions are computed from
    the WRITTEN pitch (sounding + 12 for guitar). `staffPos(midi, isGuitar)`
    returns half-steps above the middle line (positive = higher).
@@ -169,6 +175,11 @@ Git repo on `main`; commit as you go (conventional commits).
    with the parent shell).
 6. **Debug hook**: `window.__stdbRenderer` exposes the StdbdEngine
    (`positionAt`, `pointFor`, `getBarRect`) — used by scripts and E2E.
+   Measure-button clicks: the score's container pointerdown handler must
+   skip `[data-stdb-action]` targets — otherwise the caret re-render
+   destroys the button between mousedown and click and the click never
+   fires. The last system reserves ~6.6 staff spaces of tail room so the
+   buttons stay inside the overlay SVG's hit-testable area.
 7. Tests use non-null assertions freely (`**/test/**` eslint override);
    production code must not.
 

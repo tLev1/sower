@@ -196,6 +196,24 @@ body {
   overflow: visible;
 }
 
+/* engine-drawn measure controls */
+.stdb-score-overlay [data-stdb-action] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.stdb-score-overlay [data-stdb-action]:hover .stdb-btn-bg {
+  stroke: var(--accent);
+}
+
+.stdb-score-overlay [data-stdb-action] {
+  transition: opacity 120ms var(--ease-out);
+}
+
+.stdb-score-overlay [data-stdb-action]:hover {
+  opacity: 1;
+}
+
 /* ---------- status bar ---------- */
 
 .status-bar {

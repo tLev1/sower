@@ -129,4 +129,36 @@ describe("applyCommand", () => {
     expect(next.tracks[0]!.midiProgram).toBe(33);
     expect(score.tracks[0]!.midiProgram).toBe(30);
   });
+
+  it("addBar appends an empty bar inheriting the time signature", () => {
+    const score = makeScore();
+    const next = applyCommand(score, { type: "addBar", afterBarId: null }, ctx);
+    expect(next.bars).toHaveLength(2);
+    const added = next.bars[1]!;
+    expect(added.id).toBe(300 as never);
+    expect(added.timeSignature).toEqual({ numerator: 4, denominator: 4 });
+    expect(added.voices[0]!.notes).toHaveLength(0);
+    expect(score.bars).toHaveLength(1);
+  });
+
+  it("addBar can insert after a specific bar and override the signature", () => {
+    const score = makeScore();
+    const withSecond = applyCommand(score, { type: "addBar", afterBarId: null }, ctx);
+    const next = applyCommand(withSecond, {
+      type: "addBar",
+      afterBarId: 1 as never,
+      timeSignature: { numerator: 3, denominator: 4 },
+    }, ctx);
+    expect(next.bars).toHaveLength(3);
+    expect(next.bars[1]!.timeSignature).toEqual({ numerator: 3, denominator: 4 });
+  });
+
+  it("removeBar deletes the bar and refuses to empty the score", () => {
+    const score = makeScore();
+    expect(() => applyCommand(score, { type: "removeBar", barId: 1 as never }, ctx)).toThrow();
+    const withSecond = applyCommand(score, { type: "addBar", afterBarId: null }, ctx);
+    const next = applyCommand(withSecond, { type: "removeBar", barId: 300 as never }, ctx);
+    expect(next.bars).toHaveLength(1);
+    expect(withSecond.bars).toHaveLength(2);
+  });
 });

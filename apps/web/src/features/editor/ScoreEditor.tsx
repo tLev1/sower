@@ -33,6 +33,17 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
     renderer.setStartPosition({ barIndex: caret.barIndex, tick: caret.tick });
   }, [renderer, caret, score]);
 
+  // measure controls on the sheet
+  useEffect(() => {
+    if (!renderer) return;
+    const offAdd = renderer.onAppendBarClicked(() => editor.appendBar());
+    const offRemove = renderer.onRemoveBarClicked(() => editor.removeLastBar());
+    return () => {
+      offAdd();
+      offRemove();
+    };
+  }, [renderer, editor.appendBar, editor.removeLastBar]);
+
   const stringLabels = Array.from(
     { length: score.tracks[0]?.tuning?.strings.length ?? 0 },
     (_, i) => openStringPitch(score, i),

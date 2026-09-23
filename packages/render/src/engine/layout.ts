@@ -423,7 +423,9 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     );
     const widths = barIndexes.map((bi) => Math.max(baseWidths[bi] ?? 0, minBarWidth));
     const totalContent = widths.reduce((a, b) => a + b, 0);
-    const available = contentWidth - lead;
+    // the last system leaves room after the final barline for the +/− controls
+    const tailReserve = s === groups.length - 1 ? staffSpace * 6.6 : 0;
+    const available = contentWidth - lead - tailReserve;
     const scale = totalContent > 0 ? Math.max(available / totalContent, 0.55) : 1;
     const stretched = widths.map((w) => w * scale);
 

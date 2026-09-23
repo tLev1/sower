@@ -44,11 +44,14 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   private score: Score | null = null;
   private layout: LayoutDocument | null = null;
   private readonly player: WebAudioPlayer;
+  private positionHook: (() => void) | null = null;
   private caret: CaretPosition | null = null;
   private playhead: { readonly barIndex: number; readonly tick: number } | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly clickListeners = new Set<(position: ClickedPosition) => void>();
+  private readonly appendBarListeners = new Set<() => void>();
+  private readonly removeBarListeners = new Set<() => void>();
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -67,6 +70,7 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     this.container.appendChild(wrapper);
     this.wrapper = wrapper;
     this.overlaySvg = overlay;
+    overlay.addEventListener("click", this.handleOverlayClick);
 
     this.resizeObserver = new ResizeObserver(() => {
       if (this.resizeTimer) clearTimeout(this.resizeTimer);
@@ -78,6 +82,11 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     this.resizeObserver.observe(this.container);
 
     this.container.addEventListener("pointerdown", this.handlePointerDown);
+
+    // the engine owns the playhead: track playback position internally
+    this.positionHook = this.player.onPosition((pos) => {
+      this.setPlayhead(pos ? { barIndex: pos.barIndex, tick: pos.tick } : null);
+    });
 
     void document.fonts.ready.then(() => {
       if (this.score) this.relayout();
@@ -93,12 +102,15 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   }
 
   dispose(): void {
+    this.positionHook?.();
+    this.positionHook = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     if (this.resizeTimer) {
       clearTimeout(this.resizeTimer);
       this.resizeTimer = null;
     }
+    this.overlaySvg?.removeEventListener("click", this.handleOverlayClick);
     this.container.removeEventListener("pointerdown", this.handlePointerDown);
     this.player.dispose();
     this.wrapper?.remove();
@@ -109,6 +121,8 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     this.caret = null;
     this.playhead = null;
     this.clickListeners.clear();
+    this.appendBarListeners.clear();
+    this.removeBarListeners.clear();
     delete (window as unknown as Record<string, unknown>).__stdbRenderer;
   }
 
@@ -177,6 +191,22 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     return this.player.onPosition((pos) => {
       listener(pos ? { barIndex: pos.barIndex, tick: pos.tick } : null);
     });
+  }
+
+  /** Subscribes to clicks on the "+" (append measure) button. */
+  onAppendBarClicked(listener: () => void): () => void {
+    this.appendBarListeners.add(listener);
+    return () => {
+      this.appendBarListeners.delete(listener);
+    };
+  }
+
+  /** Subscribes to clicks on the "−" (remove measure) button. */
+  onRemoveBarClicked(listener: () => void): () => void {
+    this.removeBarListeners.add(listener);
+    return () => {
+      this.removeBarListeners.delete(listener);
+    };
   }
 
   // -- ScorePlayer -----------------------------------------------------------------
@@ -267,6 +297,10 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     }
     overlay.innerHTML = markup;
 
+    // append/remove measure buttons after the final barline
+    const buttons = this.measureButtonsMarkup();
+    if (buttons) overlay.insertAdjacentHTML("beforeend", buttons);
+
     // keep the playhead in view while playing
     if (this.playhead) {
       const anchor = playheadAnchor(layout, this.playhead.barIndex, this.playhead.tick);
@@ -281,7 +315,56 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     }
   }
 
+  /** Small +/− controls after the final barline for extending the score. */
+  private measureButtonsMarkup(): string {
+    const layout = this.layout;
+    if (!layout) return "";
+    const lastSystem = layout.systems[layout.systems.length - 1];
+    const lastBar = lastSystem?.bars[lastSystem.bars.length - 1];
+    const tb = lastBar?.tracks[0];
+    if (!lastSystem || !lastBar || !tb) return "";
+    const top = tb.notation ? tb.staffTop : tb.tabTop;
+    const bottom = tb.tab && tb.stringCount > 0
+      ? tb.tabTop + (tb.stringCount - 1) * layout.tabLineGap
+      : tb.staffTop + layout.staffSpace * 4;
+    const cy = (top + bottom) / 2;
+    const r = 10.5;
+    const spacing = 2 * r + 8;
+    const multiple = layout.score.bars.length > 1;
+    const buttons: string[] = [];
+    const draw = (cx: number, label: string, action: string, accent: string): string =>
+      `<g data-stdb-action="${action}" class="stdb-bar-btn">` +
+      `<rect class="stdb-btn-bg" x="${round2(cx - r)}" y="${round2(cy - r)}" width="${round2(2 * r)}" height="${round2(2 * r)}" rx="${r}"` +
+      ` fill="#1c2330" stroke="#2a3342" stroke-width="1" />` +
+      `<text x="${round2(cx)}" y="${round2(cy + 5)}" font-family="Inter Variable, Inter, sans-serif" font-size="15"` +
+      ` font-weight="600" fill="${accent}" text-anchor="middle">${label}</text></g>`;
+    let cx = lastBar.x1 + 14 + r;
+    if (multiple) {
+      buttons.push(draw(cx, "−", "remove-bar", "#8b95a8"));
+      cx += spacing;
+    }
+    buttons.push(draw(cx, "+", "add-bar", "#4f8cff"));
+    return buttons.join("");
+  }
+
+  private handleOverlayClick = (event: MouseEvent): void => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const actionEl = target.closest("[data-stdb-action]");
+    if (!actionEl) return;
+    const action = actionEl.getAttribute("data-stdb-action");
+    event.preventDefault();
+    if (action === "add-bar") {
+      for (const listener of [...this.appendBarListeners]) listener();
+    } else if (action === "remove-bar") {
+      for (const listener of [...this.removeBarListeners]) listener();
+    }
+  };
+
   private handlePointerDown = (event: PointerEvent): void => {
+    // measure buttons handle their own clicks — don't reposition the caret
+    // (re-rendering the overlay here would destroy the button mid-click)
+    if (event.target instanceof Element && event.target.closest("[data-stdb-action]")) return;
     const position = this.positionAt(event.clientX, event.clientY);
     if (!position) return;
     for (const listener of this.clickListeners) listener(position);

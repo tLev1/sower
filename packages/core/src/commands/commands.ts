@@ -1,5 +1,4 @@
 import type { BarId, Note, NoteId, Score, TrackId } from "../model/index.js";
-
 /**
  * Event-sourced editing: every modification of a Score is a Command that
  * returns the new Score. Commands are pure functions; undo/redo, versioning,
@@ -14,7 +13,9 @@ export type Command =
   | SetNoteDuration
   | AddNote
   | RemoveNote
-  | SetTrackInstrument;
+  | SetTrackInstrument
+  | AddBar
+  | RemoveBar;
 
 export interface SetNotePitch {
   readonly type: "setNotePitch";
@@ -61,10 +62,25 @@ export interface SetTrackInstrument {
   readonly midiProgram: number;
 }
 
+export interface AddBar {
+  readonly type: "addBar";
+  /** null appends after the last bar; otherwise inserts right after this bar. */
+  readonly afterBarId: BarId | null;
+  /** Defaults to the preceding bar's signature (or 4/4). */
+  readonly timeSignature?: { readonly numerator: number; readonly denominator: number };
+}
+
+export interface RemoveBar {
+  readonly type: "removeBar";
+  readonly barId: BarId;
+}
+
 export interface CommandContext {
   /** Monotonic id generator shared across the editing session. */
   nextNoteId(): NoteId;
   nextBarId(): BarId;
+  /** Keeps the allocator ahead of externally-loaded scores (optional). */
+  sync?(score: Score): void;
 }
 
 export function applyCommand(score: Score, command: Command, ctx: CommandContext): Score {
@@ -105,6 +121,34 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
           t.id === command.trackId ? { ...t, midiProgram: command.midiProgram } : t,
         ),
       };
+    case "addBar": {
+      const afterIndex = command.afterBarId === null
+        ? score.bars.length - 1
+        : score.bars.findIndex((b) => b.id === command.afterBarId);
+      if (afterIndex < -1 || afterIndex >= score.bars.length) {
+        throw new Error(`Bar ${String(command.afterBarId)} not found`);
+      }
+      const previous = score.bars[afterIndex];
+      const emptyBar = {
+        id: ctx.nextBarId(),
+        timeSignature: command.timeSignature ?? previous?.timeSignature ?? { numerator: 4, denominator: 4 },
+        keyChange: null,
+        tempo: null,
+        voices: [{ notes: [] }],
+      };
+      const bars = [...score.bars];
+      bars.splice(afterIndex + 1, 0, emptyBar);
+      return { ...score, bars };
+    }
+    case "removeBar": {
+      if (score.bars.length <= 1) {
+        throw new Error("Cannot remove the last remaining measure");
+      }
+      if (!hasBar(score, command.barId)) {
+        throw new Error(`Bar ${String(command.barId)} not found`);
+      }
+      return { ...score, bars: score.bars.filter((b) => b.id !== command.barId) };
+    }
   }
 }
 

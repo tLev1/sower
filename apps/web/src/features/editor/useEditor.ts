@@ -170,6 +170,21 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     doc.redo();
   }, [doc]);
 
+  const appendBar = useCallback((): EditResult => {
+    const s = doc.score;
+    const lastBar = s.bars[s.bars.length - 1];
+    execute({ type: "addBar", afterBarId: lastBar ? lastBar.id : null });
+    return "applied";
+  }, [doc, execute]);
+
+  const removeLastBar = useCallback((): EditResult => {
+    const s = doc.score;
+    const lastBar = s.bars[s.bars.length - 1];
+    if (!lastBar || s.bars.length <= 1) return "clamped";
+    execute({ type: "removeBar", barId: lastBar.id });
+    return "applied";
+  }, [doc, execute]);
+
   const handleKeyDown = useCallback(
     (e: KeyLike) => {
       if (isTextEntryTarget(e.target)) return;
@@ -291,6 +306,8 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     navigate,
     undo,
     redo,
+    appendBar,
+    removeLastBar,
     handleKeyDown,
   };
 }

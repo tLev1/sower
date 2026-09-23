@@ -1,6 +1,6 @@
 import type { Score } from "../model/index.js";
-import { applyCommand, type Command, type CommandContext } from "./commands.js";
-import { createIdAllocator } from "../operations/index.js";
+import { applyCommand, type Command } from "./commands.js";
+import { createIdAllocator, type IdAllocator } from "../operations/index.js";
 
 interface HistoryEntry {
   readonly command: Command;
@@ -24,9 +24,10 @@ export class ScoreDocument {
   private cursor = -1;
   private readonly maxHistory: number;
   private readonly listeners = new Set<() => void>();
-  private readonly ctx: CommandContext = createIdAllocator();
+  private readonly ctx: IdAllocator;
 
   constructor(options: ScoreDocumentOptions) {
+    this.ctx = createIdAllocator(options.initialScore);
     this.initial = options.initialScore;
     this.current = options.initialScore;
     this.maxHistory = options.maxHistory ?? 500;
@@ -80,6 +81,7 @@ export class ScoreDocument {
     this.history = [];
     this.cursor = -1;
     this.current = score;
+    this.ctx.sync(score);
     this.emit();
   }
 

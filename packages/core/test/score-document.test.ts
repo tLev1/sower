@@ -34,6 +34,26 @@ function makeScore(): Score {
 const pitch = (fret: number) => 40 + fret;
 
 describe("ScoreDocument", () => {
+  it("never allocates ids that collide with the loaded score", () => {
+    const doc = new ScoreDocument({ initialScore: makeScore() });
+    doc.execute({ type: "addBar", afterBarId: null });
+    const addedBarId = doc.score.bars[1]!.id;
+    expect(addedBarId).not.toBe(1 as never);
+    expect(doc.score.bars[0]!.id).not.toBe(addedBarId);
+    doc.execute({ type: "removeBar", barId: addedBarId });
+    expect(doc.score.bars).toHaveLength(1); // exactly one bar removed
+  });
+
+  it("re-seeds the allocator after reset (loaded scores keep unique ids)", () => {
+    const doc = new ScoreDocument({ initialScore: makeScore() });
+    doc.reset(makeScore()); // external load with high ids must be respected
+    doc.execute({ type: "addBar", afterBarId: null });
+    const added = doc.score.bars[1]!;
+    expect(added.id).not.toBe(1 as never);
+    doc.execute({ type: "removeBar", barId: added.id });
+    expect(doc.score.bars).toHaveLength(1); // exactly one bar removed
+  });
+
   it("applies commands and notifies subscribers", () => {
     const doc = new ScoreDocument({ initialScore: makeScore() });
     const listener = vi.fn();

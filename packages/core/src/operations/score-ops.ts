@@ -1,14 +1,50 @@
 import type { Bar, Score } from "../model/index.js";
 import { ticksPerBar } from "../model/index.js";
 
-/** Simple linear id sequence for editing sessions. */
-export function createIdAllocator() {
-  let nextNote = 1;
-  let nextBar = 1;
+/**
+ * Linear id sequence for editing sessions. Seeded above the ids of the
+ * current score (and re-seeded on reset) so allocated ids never collide
+ * with externally-loaded data.
+ */
+export interface IdAllocator {
+  nextNoteId(): never;
+  nextBarId(): never;
+  sync(score: Score): void;
+}
+
+export function createIdAllocator(score?: Score): IdAllocator {
+  let nextNote = maxNoteId(score) + 1;
+  let nextBar = maxBarId(score) + 1;
   return {
     nextNoteId: () => nextNote++ as never,
     nextBarId: () => nextBar++ as never,
+    sync: (s: Score): void => {
+      nextNote = Math.max(nextNote, maxNoteId(s) + 1);
+      nextBar = Math.max(nextBar, maxBarId(s) + 1);
+    },
   };
+}
+
+function maxBarId(score: Score | undefined): number {
+  let max = 0;
+  if (!score) return max;
+  for (const bar of score.bars) {
+    if (bar.id > max) max = bar.id;
+  }
+  return max;
+}
+
+function maxNoteId(score: Score | undefined): number {
+  let max = 0;
+  if (!score) return max;
+  for (const bar of score.bars) {
+    for (const voice of bar.voices) {
+      for (const note of voice.notes) {
+        if (note.id > max) max = note.id;
+      }
+    }
+  }
+  return max;
 }
 
 /** Effective tempo at a bar index, resolving null (carry previous). */

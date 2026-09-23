@@ -1,7 +1,9 @@
 export type { Command, CommandContext } from "./commands.js";
 export { applyCommand } from "./commands.js";
 export type {
+  AddBar,
   AddNote,
+  RemoveBar,
   RemoveNote,
   SetNoteDuration,
   SetNotePitch,

@@ -247,7 +247,9 @@ function drawKeySignature(bar: BarBox, tb: TrackBar, S: number, parts: string[])
 function drawTimeSignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]): void {
   const ts = bar.timeSignature;
   if (!ts) return;
-  const digitW = S * 1.1;
+  // Bravura time-sig digits are centered on their baseline and span exactly
+  // one staff space above and below it; one digit ≈ 1.9 spaces wide.
+  const digitW = S * 2.0;
   const num = String(ts.numerator);
   const den = String(ts.denominator);
   const block = Math.max(num.length, den.length) * digitW;
@@ -256,11 +258,11 @@ function drawTimeSignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]
   const denX = x + (block - den.length * digitW) / 2;
   for (let i = 0; i < num.length; i++) {
     const d = Number(num[i] ?? 0);
-    parts.push(glyph(G.timeSig0 + d, numX + i * digitW, tb.staffTop + S * 2, { size: S * 4, anchor: "middle" }));
+    parts.push(glyph(G.timeSig0 + d, numX + i * digitW, tb.staffTop + S, { size: S * 4, anchor: "middle", cls: "stdb-time-sig" }));
   }
   for (let i = 0; i < den.length; i++) {
     const d = Number(den[i] ?? 0);
-    parts.push(glyph(G.timeSig0 + d, denX + i * digitW, tb.staffTop + S * 4, { size: S * 4, anchor: "middle" }));
+    parts.push(glyph(G.timeSig0 + d, denX + i * digitW, tb.staffTop + S * 3, { size: S * 4, anchor: "middle", cls: "stdb-time-sig" }));
   }
 }
 
