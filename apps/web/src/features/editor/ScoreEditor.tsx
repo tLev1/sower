@@ -58,9 +58,11 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
         <span>
           Bar {editor.caretInfo.bar} · String {editor.caretInfo.string} · Step{" "}
           {editor.caretInfo.step}
+          {editor.pendingFret !== null ? ` · Fret ${editor.pendingFret}_` : ""}
         </span>
         <span className="hint">
-          Click a beat · Arrows navigate · 0-9 frets · Backspace delete · Ctrl+Z undo · Space play
+          Click a beat · Arrows navigate · 0-9 frets · Ctrl+1/2 then digit for 10-24 · Backspace
+          delete · Ctrl+Z undo · Space play
         </span>
         <span className="strings">
           {stringLabels.map((midi, i) => (

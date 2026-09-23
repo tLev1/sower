@@ -4,6 +4,7 @@ import type { StdbdEngine } from "@stdbd/render";
 import type { ClickedPosition } from "@stdbd/render";
 import {
   GRID_TICKS,
+  MAX_FRET,
   capacityOf,
   createCaret,
   moveCaretHorizontally,
@@ -66,6 +67,9 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
   rendererRef.current = renderer;
   /** Tick/string of the last placed note — ↑/↓ return here after auto-advance. */
   const lastPlacedRef = useRef<{ tick: number; stringIndex: number } | null>(null);
+  /** Tens digit of an in-progress two-digit fret entry (Ctrl+1/2 → 10-24). */
+  const [pendingFret, setPendingFret] = useState<number | null>(null);
+  const pendingFretRef = useRef<number | null>(null);
 
   useEffect(() => doc.subscribe(() => { setVersion((v) => v + 1); }), [doc]);
 
@@ -193,19 +197,53 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
+        pendingFretRef.current = null;
+        setPendingFret(null);
         return;
       }
       if (ctrl && e.key.toLowerCase() === "y") {
         e.preventDefault();
         redo();
+        pendingFretRef.current = null;
+        setPendingFret(null);
         return;
       }
-      if (ctrl) return;
+      if (ctrl) {
+        // Ctrl+1 / Ctrl+2 start a two-digit fret entry (frets 10-24).
+        // The next digit — plain, or still with Ctrl held — completes it.
+        if (/^[0-9]$/.test(e.key)) {
+          e.preventDefault();
+          const d = Number(e.key);
+          const pending = pendingFretRef.current;
+          if (pending !== null) {
+            const fret = pending * 10 + d;
+            pendingFretRef.current = null;
+            setPendingFret(null);
+            if (fret <= MAX_FRET) placeFret(fret);
+          } else if (d === 1 || d === 2) {
+            pendingFretRef.current = d;
+            setPendingFret(d);
+          }
+        }
+        return;
+      }
 
       if (/^[0-9]$/.test(e.key)) {
         e.preventDefault();
+        const pending = pendingFretRef.current;
+        if (pending !== null) {
+          const fret = pending * 10 + Number(e.key);
+          pendingFretRef.current = null;
+          setPendingFret(null);
+          if (fret <= MAX_FRET) placeFret(fret);
+          return;
+        }
         placeFret(Number(e.key));
         return;
+      }
+      if (pendingFretRef.current !== null && e.key !== "Shift") {
+        pendingFretRef.current = null;
+        setPendingFret(null);
       }
       switch (e.key) {
         case "ArrowRight":
@@ -299,6 +337,7 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     version,
     caret,
     caretInfo,
+    pendingFret,
     container,
     setContainer,
     placeFret,

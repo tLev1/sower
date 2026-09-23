@@ -117,15 +117,29 @@ Git repo on `main`; commit as you go (conventional commits).
   quiet), chord strum stagger (~11 ms, low strings first), ±5 cent detune,
   velocity→gain curve, master compressor + generated-impulse reverb send.
   Playhead (glowing line) + auto-scroll while playing; resumes from pause
-  offset; restarts from caret after stop.
+  offset; restarts from caret after stop. Sync: all pluck buffers are
+  pre-generated on play (`primeBuffers`) so nothing hitches mid-bar; the
+  emitted position is compensated by `outputLatency + baseLatency` so the
+  playhead tracks what the listener HEARS; playhead ticks are fractional
+  (continuous motion, no per-grid jumps); pause/stop fade out via the
+  master gain (~110 ms) instead of hard-cutting sources. Auto-scroll is
+  vertical-only and smooth (systems always fit the view width; horizontal
+  jumps were the old "glitch when crossing measures").
 - **Interaction**: `positionAt(clientX, clientY)` → `{barIndex, tick,
   stringIndex}` from pure layout geometry (exact TAB string under cursor).
   `pointFor(...)` inverse for tests. Engine-drawn caret (thin accent line +
   string dot) and playhead overlays.
 - **Editing session**: `useEditor` owns caret + window-level keymap (digits
   place frets, ↑/↓ string moves with chord-return, ←/→ grid steps, Backspace,
-  Ctrl+Z/Y). Document autosaves to IndexedDB (600ms debounce), restores on
-  reload. Bar highlight replaced by the engine caret.
+  Ctrl+Z/Y). Two-digit frets: Ctrl+1/Ctrl+2 opens the entry (status bar shows
+  "Fret 1_"), the next digit — plain or still with Ctrl held — completes it
+  (frets 10-24, `MAX_FRET`); any other key cancels. Document autosaves to
+  IndexedDB (600ms debounce), restores on reload. Bar highlight replaced by
+  the engine caret.
+- **Notation overhang**: `trackLayouts` scans each track's pitches and
+  reserves ledger-line space above/below the staff (`overUp`/`overDown`) so
+  high-fret notes (fret 15+ writes 3+ ledger lines) never collide with the
+  header or the neighboring system.
 - **Measure management**: engine-drawn "+/−" buttons after the final barline
   (SVG, hit-testable, − hidden at 1 bar); `addBar`/`removeBar` commands in
   core; the id allocator seeds from the score and re-syncs on reset (avoids

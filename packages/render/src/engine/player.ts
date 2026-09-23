@@ -96,14 +96,14 @@ export class WebAudioPlayer implements ScorePlayer {
     if (!this.playing) return;
     this.offsetSec = this.virtualNow();
     this.stopTimers();
-    this.stopAllSources();
+    this.fadeOutAndStop();
     this.playing = false;
     this.emitState();
   }
 
   stop(): void {
     this.stopTimers();
-    this.stopAllSources();
+    this.fadeOutAndStop();
     this.playing = false;
     this.offsetSec = 0;
     this.pointer = 0;
@@ -136,6 +136,12 @@ export class WebAudioPlayer implements ScorePlayer {
       if (!ctx) return;
       if (ctx.state === "suspended") void ctx.resume();
       this.rebuildTimeline(score);
+      this.primeBuffers();
+      const master = this.master;
+      if (master) {
+        master.gain.cancelScheduledValues(ctx.currentTime);
+        master.gain.setValueAtTime(0.85, ctx.currentTime);
+      }
       this.offsetSec = Math.min(Math.max(0, fromSec), Math.max(0, this.totalSec - 0.05));
       this.pointer = this.findIndexAt(this.offsetSec);
       this.startCtxTime = ctx.currentTime + 0.08;
@@ -150,7 +156,7 @@ export class WebAudioPlayer implements ScorePlayer {
         const pos = this.virtualNow();
         if (pos >= this.totalSec) {
           this.stopTimers();
-          this.stopAllSources();
+          this.fadeOutAndStop();
           this.playing = false;
           this.offsetSec = 0;
           this.pointer = 0;
@@ -158,11 +164,42 @@ export class WebAudioPlayer implements ScorePlayer {
           this.emitState();
           return;
         }
-        this.emitPosition(this.locate(pos));
+        // the playhead tracks what the listener hears, not the audio clock:
+        // compensate for output latency so sound and visuals stay in sync
+        const audiblePos = Math.max(0, pos - this.visualLatencySec());
+        this.emitPosition(this.locate(audiblePos));
         this.positionRaf = requestAnimationFrame(tick);
       };
       this.positionRaf = requestAnimationFrame(tick);
     });
+  }
+
+  /** Pre-generates all pluck buffers so playback never hitches on a cache miss. */
+  private primeBuffers(): void {
+    const score = this.getScore();
+    if (!score) return;
+    for (const bar of score.bars) {
+      for (const note of bar.voices[0]?.notes ?? []) {
+        const style: PluckStyle = note.articulations.some((a) => a.kind === "palmMute")
+          ? "palmMute"
+          : note.articulations.some((a) => a.kind === "letRing")
+            ? "letRing"
+            : "normal";
+        void this.pluckBuffer(note.pitch, style);
+      }
+    }
+  }
+
+  /**
+   * Delay between scheduling a sound and it reaching the speakers — the
+   * visual playhead must lag by this amount to match what the user hears.
+   */
+  private visualLatencySec(): number {
+    const ctx = this.ctx;
+    if (!ctx) return 0;
+    const out = typeof ctx.outputLatency === "number" ? ctx.outputLatency : 0;
+    const base = typeof ctx.baseLatency === "number" ? ctx.baseLatency : 0;
+    return Math.max(0, out + base);
   }
 
   private scheduleWindow(): void {
@@ -346,7 +383,8 @@ export class WebAudioPlayer implements ScorePlayer {
     const ticks = this.barTicks[barIndex] ?? TICKS_PER_QUARTER * 4;
     const barSec = this.barSeconds[barIndex] ?? 0;
     const secPerTick = barSec / Math.max(ticks, 1);
-    const tick = Math.round((pos - barStart) / Math.max(secPerTick, 1e-6));
+    // fractional ticks keep the playhead motion continuous between beats
+    const tick = (pos - barStart) / Math.max(secPerTick, 1e-6);
     return {
       barIndex,
       tick: Math.min(Math.max(0, tick), Math.max(0, ticks - 1)),
@@ -367,6 +405,26 @@ export class WebAudioPlayer implements ScorePlayer {
   private virtualNow(): number {
     if (!this.playing || !this.ctx) return this.offsetSec;
     return this.offsetSec + (this.ctx.currentTime - this.startCtxTime);
+  }
+
+  /** Short master fade, then hard-stop pending sources (no abrupt click). */
+  private fadeOutAndStop(): void {
+    const ctx = this.ctx;
+    const master = this.master;
+    if (ctx && master) {
+      master.gain.cancelScheduledValues(ctx.currentTime);
+      master.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.025);
+      setTimeout(() => {
+        this.stopAllSources();
+        const c = this.ctx;
+        if (c && this.master) {
+          this.master.gain.cancelScheduledValues(c.currentTime);
+          this.master.gain.setValueAtTime(0.85, c.currentTime);
+        }
+      }, 110);
+    } else {
+      this.stopAllSources();
+    }
   }
 
   private stopTimers(): void {

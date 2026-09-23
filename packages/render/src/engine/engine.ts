@@ -47,6 +47,8 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   private positionHook: (() => void) | null = null;
   private caret: CaretPosition | null = null;
   private playhead: { readonly barIndex: number; readonly tick: number } | null = null;
+  private lastDynMarkup = "";
+  private lastScrollTarget = -1;
   private resizeObserver: ResizeObserver | null = null;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly clickListeners = new Set<(position: ClickedPosition) => void>();
@@ -251,7 +253,14 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
       overlay.setAttribute("width", String(w));
       overlay.setAttribute("height", String(h));
       overlay.setAttribute("viewBox", `0 0 ${w} ${h}`);
+      // split layers: measure buttons are static per layout; caret/playhead
+      // update per frame without touching them (no hover flicker)
+      overlay.innerHTML = '<g class="stdb-btns"></g><g class="stdb-dyn"></g>';
+      const btns = overlay.querySelector(".stdb-btns");
+      if (btns instanceof SVGGElement) btns.innerHTML = this.measureButtonsMarkup();
     }
+    this.lastDynMarkup = "";
+    this.lastScrollTarget = -1;
     this.renderOverlays();
   }
 
@@ -275,6 +284,8 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     const overlay = this.overlaySvg;
     const layout = this.layout;
     if (!overlay || !layout) return;
+    const dyn = overlay.querySelector(".stdb-dyn");
+    if (!(dyn instanceof SVGGElement)) return;
     let markup = "";
     if (this.playhead) {
       const anchor = playheadAnchor(layout, this.playhead.barIndex, this.playhead.tick);
@@ -295,22 +306,29 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
           `<circle cx="${round2(anchor.x)}" cy="${round2(anchor.y)}" r="3.2" fill="${engravingTheme.caretColor}" />`;
       }
     }
-    overlay.innerHTML = markup;
+    if (markup === this.lastDynMarkup) return;
+    this.lastDynMarkup = markup;
+    dyn.innerHTML = markup;
+    this.autoScroll();
+  }
 
-    // append/remove measure buttons after the final barline
-    const buttons = this.measureButtonsMarkup();
-    if (buttons) overlay.insertAdjacentHTML("beforeend", buttons);
-
-    // keep the playhead in view while playing
-    if (this.playhead) {
-      const anchor = playheadAnchor(layout, this.playhead.barIndex, this.playhead.tick);
-      const scroller = this.container.closest(".score-scroll");
-      if (anchor && scroller instanceof HTMLElement) {
-        const left = scroller.scrollLeft;
-        const view = scroller.clientWidth;
-        if (anchor.x < left + 70 || anchor.x > left + view - 130) {
-          scroller.scrollLeft = Math.max(0, anchor.x - view * 0.35);
-        }
+  /**
+   * Keeps the playhead visible while playing: systems always fit the view
+   * width, so scrolling is vertical only — smooth, and only re-issued when
+   * the target moves meaningfully (no jitter at frame rate).
+   */
+  private autoScroll(): void {
+    if (!this.playhead || !this.layout) return;
+    const anchor = playheadAnchor(this.layout, this.playhead.barIndex, this.playhead.tick);
+    const scroller = this.container.closest(".score-scroll");
+    if (!anchor || !(scroller instanceof HTMLElement)) return;
+    const st = scroller.scrollTop;
+    const view = scroller.clientHeight;
+    if (anchor.top < st + 40 || anchor.bottom > st + view - 60) {
+      const target = Math.max(0, anchor.top - view * 0.35);
+      if (Math.abs(target - this.lastScrollTarget) > 24) {
+        scroller.scrollTo({ top: target, behavior: "smooth" });
+        this.lastScrollTarget = target;
       }
     }
   }

@@ -8,6 +8,9 @@ import { TICKS_PER_QUARTER, ticksPerBar } from "@stdbd/core";
  */
 export const GRID_TICKS = TICKS_PER_QUARTER / 2;
 
+/** Highest fret the editor accepts (24-fret guitars). */
+export const MAX_FRET = 24;
+
 export interface Caret {
   readonly barIndex: number;
   readonly stringIndex: number;

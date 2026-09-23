@@ -218,6 +218,13 @@ interface TrackLayout {
   readonly tab: boolean;
   readonly stringCount: number;
   readonly blockHeight: number;
+  /** Space above the top staff line needed by out-of-staff notes (px). */
+  readonly overUp: number;
+  /** Space below the bottom staff line needed by deep notes (px). */
+  readonly overDown: number;
+  /** Offsets of the staves within the track block (px from block top). */
+  readonly staffTopOffset: number;
+  readonly tabTopOffset: number;
 }
 
 function trackLayouts(score: Score, tabGap: number): TrackLayout[] {
@@ -226,10 +233,43 @@ function trackLayouts(score: Score, tabGap: number): TrackLayout[] {
     const fretted = strings > 0 && (track.instrument === "guitar" || track.instrument === "bass");
     const notation = track.clef === "g2" || track.clef === "f4" || fretted;
     const tab = strings > 0;
+
+    // Notation extremes: high frets push notes far above the staff (ledger
+    // lines), deep notes far below — reserve that space so systems never
+    // collide with the header or the neighboring system.
+    let maxPos = 0;
+    let minPos = 0;
+    if (notation) {
+      maxPos = -Number.MAX_SAFE_INTEGER;
+      minPos = Number.MAX_SAFE_INTEGER;
+      for (const bar of score.bars) {
+        for (const note of bar.voices[0]?.notes ?? []) {
+          const pos = staffPositionForPitch(note.pitch, track.clef);
+          if (pos > maxPos) maxPos = pos;
+          if (pos < minPos) minPos = pos;
+        }
+      }
+    }
+    const overUp = notation && maxPos > 4 ? (maxPos - 4) * (STAFF_SPACE / 2) : 0;
+    const overDown = notation && minPos < -4 ? (-4 - minPos) * (STAFF_SPACE / 2) : 0;
+    const staffTopOffset = overUp;
+    const tabTopOffset = overUp + STAFF_SPACE * 4 + overDown + STAFF_SPACE * 2.1;
+
     let blockHeight = 0;
-    if (notation) blockHeight += STAFF_SPACE * 4 + STAFF_SPACE * 2.1;
+    if (notation) blockHeight += staffTopOffset + STAFF_SPACE * 4 + overDown + STAFF_SPACE * 2.1;
     if (tab) blockHeight += Math.max(strings - 1, 0) * tabGap + STAFF_SPACE * 2.7;
-    return { track, trackIndex, notation, tab, stringCount: strings, blockHeight };
+    return {
+      track,
+      trackIndex,
+      notation,
+      tab,
+      stringCount: strings,
+      blockHeight,
+      overUp,
+      overDown,
+      staffTopOffset,
+      tabTopOffset,
+    };
   });
 }
 
@@ -394,20 +434,14 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     const contentTop = yCursor + headerBlock + topGap;
 
     // Track staves stack from contentTop — one geometry entry per track.
+    // Offsets account for ledger-line overhang of out-of-staff notes.
     const geoms: { staffTop: number; tabTop: number; strings: number }[] = [];
     let cursorY = contentTop;
     for (const t of tracks) {
-      let staffTop = 0;
-      let tabTop = 0;
-      if (t.notation) {
-        staffTop = cursorY;
-        cursorY += STAFF_SPACE * 4 + STAFF_SPACE * 2.1;
-      }
-      if (t.tab) {
-        tabTop = cursorY;
-        cursorY += Math.max(t.stringCount - 1, 0) * tabGap + STAFF_SPACE * 2.7;
-      }
+      const staffTop = t.notation ? cursorY + t.staffTopOffset : 0;
+      const tabTop = t.tab ? cursorY + t.tabTopOffset : 0;
       geoms.push({ staffTop, tabTop, strings: t.stringCount });
+      cursorY += t.blockHeight;
     }
     const blockHeight = cursorY - contentTop;
     const systemHeight = headerBlock + topGap + blockHeight + staffSpace * 1.5;
