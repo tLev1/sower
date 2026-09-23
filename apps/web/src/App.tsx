@@ -44,14 +44,16 @@ export function App() {
     };
   }, [doc]);
 
-  // prewarm audio on the first user gesture anywhere → instant play latency
+  // prewarm audio on the first user gesture (pointer or key) → instant play
   useEffect(() => {
     const prewarm = (): void => {
       rendererRef.current?.prewarm();
     };
     window.addEventListener("pointerdown", prewarm, { capture: true });
+    window.addEventListener("keydown", prewarm, { capture: true });
     return () => {
       window.removeEventListener("pointerdown", prewarm, { capture: true });
+      window.removeEventListener("keydown", prewarm, { capture: true });
     };
   }, []);
 

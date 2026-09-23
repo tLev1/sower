@@ -213,4 +213,36 @@ describe("applyCommand", () => {
       denominator: 5,
     }, ctx)).toThrow();
   });
+
+  it("setTimeSignature stops at the next differing signature (later changes survive)", () => {
+    const score = makeScore();
+    let nextBarId = 300;
+    const seqCtx: CommandContext = {
+      nextNoteId: () => 200 as never,
+      nextBarId: () => nextBarId++ as never,
+    };
+    let state = score;
+    // bars: 1 (4/4), then three more inherited 4/4
+    for (let i = 0; i < 3; i++) {
+      state = applyCommand(state, { type: "addBar", afterBarId: null }, seqCtx);
+    }
+    // a 7/8 change at bar 3
+    state = applyCommand(state, {
+      type: "setTimeSignature",
+      barId: state.bars[2]!.id,
+      numerator: 7,
+      denominator: 8,
+    }, seqCtx);
+    // now change bar 1 to 3/4 — must NOT overwrite the 7/8 change at bar 3
+    const next = applyCommand(state, {
+      type: "setTimeSignature",
+      barId: state.bars[0]!.id,
+      numerator: 3,
+      denominator: 4,
+    }, seqCtx);
+    expect(next.bars[0]!.timeSignature).toEqual({ numerator: 3, denominator: 4 });
+    expect(next.bars[1]!.timeSignature).toEqual({ numerator: 3, denominator: 4 });
+    expect(next.bars[2]!.timeSignature).toEqual({ numerator: 7, denominator: 8 });
+    expect(next.bars[3]!.timeSignature).toEqual({ numerator: 7, denominator: 8 });
+  });
 });

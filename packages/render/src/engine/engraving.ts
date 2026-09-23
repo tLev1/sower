@@ -125,9 +125,15 @@ export function engrave(layout: LayoutDocument): string {
   if (layout.hasHeader) drawHeader(layout, S, parts);
   for (const system of layout.systems) {
     const lastSystem = system.index === layout.systems.length - 1;
-    for (const bar of system.bars) {
+    for (let b = 0; b < system.bars.length; b++) {
+      const bar = system.bars[b];
+      if (!bar) continue;
       const isFinal = lastSystem && bar.index === system.bars[system.bars.length - 1]?.index;
-      for (const tb of bar.tracks) drawTrackBar(bar, tb, S, isFinal, parts);
+      // a meter change opening the next measure gets a thin-thin double
+      // barline (standard practice before time-signature changes)
+      const next = system.bars[b + 1];
+      const closeWithDouble = next?.timeSignatureChange ?? false;
+      for (const tb of bar.tracks) drawTrackBar(bar, tb, S, isFinal, closeWithDouble, parts);
     }
   }
   parts.push("</svg>");
@@ -208,7 +214,14 @@ function drawTempoEquation(
 // System / bar / track scaffolding
 // ---------------------------------------------------------------------------
 
-function drawTrackBar(bar: BarBox, tb: TrackBar, S: number, isFinal: boolean, parts: string[]): void {
+function drawTrackBar(
+  bar: BarBox,
+  tb: TrackBar,
+  S: number,
+  isFinal: boolean,
+  closeWithDouble: boolean,
+  parts: string[],
+): void {
   const tabBottom = tb.tabTop + Math.max(tb.stringCount - 1, 0) * TAB_LINE_GAP;
   const top = tb.notation ? tb.staffTop : tb.tabTop;
   const bottom = tb.tab && tb.stringCount > 0 ? tabBottom : tb.staffTop + S * 4;
@@ -225,6 +238,7 @@ function drawTrackBar(bar: BarBox, tb: TrackBar, S: number, isFinal: boolean, pa
   }
 
   if (bar.systemStart) drawSystemHeader(bar, tb, S, parts);
+  if (bar.timeSignature) drawTimeSignature(bar, tb, S, parts);
   drawBarNumber(bar, tb, S, parts);
   drawTempoMark(bar, tb, S, parts);
   drawNotation(bar, tb, S, parts);
@@ -233,6 +247,10 @@ function drawTrackBar(bar: BarBox, tb: TrackBar, S: number, isFinal: boolean, pa
   if (isFinal) {
     parts.push(line(bar.x1 - 4, top, bar.x1 - 4, bottom, engravingTheme.barlineColor, 1));
     parts.push(rect(bar.x1 - 2.4, top, 2.6, bottom - top, engravingTheme.barlineColor));
+  } else if (closeWithDouble) {
+    // thin-thin pair before a meter change
+    parts.push(line(bar.x1 - 3.4, top, bar.x1 - 3.4, bottom, engravingTheme.barlineColor, 0.9));
+    parts.push(line(bar.x1, top, bar.x1, bottom, engravingTheme.barlineColor, 0.9));
   } else {
     parts.push(line(bar.x1, top, bar.x1, bottom, engravingTheme.barlineColor, 0.9));
   }
@@ -275,7 +293,6 @@ function drawSystemHeader(bar: BarBox, tb: TrackBar, S: number, parts: string[])
   if (bar.keyFifths !== null && bar.keyFifths !== 0 && tb.notation) {
     drawKeySignature(bar, tb, S, parts);
   }
-  if (bar.timeSignature && tb.notation) drawTimeSignature(bar, tb, S, parts);
 }
 
 function drawKeySignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]): void {
@@ -298,16 +315,22 @@ function drawKeySignature(bar: BarBox, tb: TrackBar, S: number, parts: string[])
   }
 }
 
+/**
+ * Time-signature digits: after clef + key on system-opening bars, near the
+ * barline on mid-system change bars (standard practice at meter changes).
+ */
 function drawTimeSignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]): void {
   const ts = bar.timeSignature;
-  if (!ts) return;
+  if (!ts || !tb.notation) return;
   // Bravura time-sig digits are centered on their baseline and span exactly
   // one staff space above and below it; one digit ≈ 1.9 spaces wide.
   const digitW = S * 2.0;
   const num = String(ts.numerator);
   const den = String(ts.denominator);
   const block = Math.max(num.length, den.length) * digitW;
-  const x = bar.x0 + S * 4.7 + Math.abs(bar.keyFifths ?? 0) * S * 0.95 + S * 0.7;
+  const x = bar.systemStart
+    ? bar.x0 + S * 4.7 + Math.abs(bar.keyFifths ?? 0) * S * 0.95 + S * 0.7
+    : bar.x0 + S * 1.1;
   const numX = x + (block - num.length * digitW) / 2;
   const denX = x + (block - den.length * digitW) / 2;
   for (let i = 0; i < num.length; i++) {
@@ -478,7 +501,10 @@ function drawChord(
     stemXs.push(stemX);
     tipYs.push(tipY);
   });
-  if (dc !== "whole" && !beamed) {
+  // flags only exist on eighth values and shorter — quarter/half notes are
+  // unbeamed but flagless (standard notation)
+  const hasFlag = dc === "eighth" || dc === "16th" || dc === "32nd";
+  if (hasFlag && !beamed) {
     const lastStem = stemXs[stemXs.length - 1];
     const lastTip = tipYs[tipYs.length - 1];
     if (lastStem !== undefined && lastTip !== undefined) {
@@ -642,7 +668,9 @@ export function markerHitAreas(layout: LayoutDocument): MarkerHitArea[] {
         const num = String(bar.timeSignature.numerator);
         const den = String(bar.timeSignature.denominator);
         const block = Math.max(num.length, den.length) * digitW;
-        const x = bar.x0 + S * 4.7 + Math.abs(bar.keyFifths ?? 0) * S * 0.95 + S * 0.7;
+        const x = bar.systemStart
+          ? bar.x0 + S * 4.7 + Math.abs(bar.keyFifths ?? 0) * S * 0.95 + S * 0.7
+          : bar.x0 + S * 1.1;
         areas.push({ action: "edit-time-sig", barIndex: bar.index, x: x - S * 0.4, y: tb.staffTop, w: block + S * 0.8, h: S * 4 });
       }
       if (tb.notation && bar.bar.tempo !== null && !(bar.index === 0 && bar.systemStart)) {

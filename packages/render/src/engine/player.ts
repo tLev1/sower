@@ -103,25 +103,8 @@ export class WebAudioPlayer implements ScorePlayer {
   play(): void {
     if (this.playing) return;
     const pausedOffset = this.offsetSec > 0.02 ? this.offsetSec : null;
-    const ctx = this.ctx;
-    // fast path: context already running → begin synchronously, no promise hop
-    if (ctx) {
-      if (ctx.state === "running") {
-        this.beginAt(pausedOffset);
-      } else {
-        // never start scheduling against a suspended clock — begin the moment
-        // the context is audible (usually the same gesture that pressed play)
-        void ctx.resume().then(() => {
-          if (!this.playing) this.beginAt(pausedOffset);
-        });
-      }
-      return;
-    }
     void this.ensureContext().then(() => {
-      const resumed = this.ctx;
-      if (!resumed) return;
-      if (resumed.state === "suspended") void resumed.resume();
-      this.beginAt(pausedOffset);
+      if (!this.playing) this.beginAt(pausedOffset);
     });
   }
 
@@ -135,9 +118,7 @@ export class WebAudioPlayer implements ScorePlayer {
     if (this.playing) return;
     void this.ensureContext().then(() => {
       const ctx = this.ctx;
-      if (!ctx || ctx.state === "suspended") {
-        if (ctx) void ctx.resume();
-      }
+      if (ctx && ctx.state === "suspended") void ctx.resume();
       const score = this.getScore();
       if (!score) return;
       if (this.timelineScore !== score) {
@@ -210,6 +191,12 @@ export class WebAudioPlayer implements ScorePlayer {
     this.startCtxTime = ctx.currentTime + 0.03;
     this.playing = true;
     this.emitState();
+    // playhead at the selection immediately — first frame should already
+    // show the start position, not one frame of stale/zero position
+    this.emitPosition(this.locate(this.offsetSec));
+    // notes already sounding at the start point join in (mid-phrase play):
+    // they sound right away with their remaining duration instead of silence
+    this.fireCarryOverNotes(this.offsetSec);
     this.interval = setInterval(() => {
       this.scheduleWindow();
     }, SCHEDULER_TICK_MS);
@@ -227,13 +214,32 @@ export class WebAudioPlayer implements ScorePlayer {
         this.emitState();
         return;
       }
-      // the playhead tracks what the listener hears, not the audio clock:
-      // compensate for output latency so sound and visuals stay in sync
-      const audiblePos = Math.max(0, pos - this.visualLatencySec());
-      this.emitPosition(this.locate(audiblePos));
+      // the playhead moves on the NOTATED grid starting at the selection —
+      // it must not lag behind by the device's output latency (which made it
+      // appear to wait on long notes before moving on)
+      const clamped = Math.max(this.offsetSec, Math.min(pos, this.totalSec));
+      this.emitPosition(this.locate(clamped));
       this.positionRaf = requestAnimationFrame(tick);
     };
     this.positionRaf = requestAnimationFrame(tick);
+  }
+
+  /**
+   * Notes whose span covers the start position but began earlier: sounding
+   * when the user hits play mid-phrase, shortened to what remains of them.
+   */
+  private fireCarryOverNotes(fromSec: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    for (const ev of this.events) {
+      if (ev.sec >= fromSec) break; // events are sorted by start time
+      const remaining = ev.durSec - (fromSec - ev.sec);
+      if (remaining <= 0.02) continue;
+      this.fireNote(
+        { ...ev, durSec: remaining, strum: 0 },
+        ctx.currentTime + 0.025,
+      );
+    }
   }
 
   /** Synchronously generates every pluck buffer needed in `[from, from+sec)`. */
@@ -270,18 +276,6 @@ export class WebAudioPlayer implements ScorePlayer {
       if (i < pending.length) setTimeout(step, 0);
     };
     if (i < pending.length) setTimeout(step, 0);
-  }
-
-  /**
-   * Delay between scheduling a sound and it reaching the speakers — the
-   * visual playhead must lag by this amount to match what the user hears.
-   */
-  private visualLatencySec(): number {
-    const ctx = this.ctx;
-    if (!ctx) return 0;
-    const out = typeof ctx.outputLatency === "number" ? ctx.outputLatency : 0;
-    const base = typeof ctx.baseLatency === "number" ? ctx.baseLatency : 0;
-    return Math.max(0, out + base);
   }
 
   private scheduleWindow(): void {
@@ -332,31 +326,32 @@ export class WebAudioPlayer implements ScorePlayer {
 
   // -- audio graph -----------------------------------------------------------------
 
-  private async ensureContext(): Promise<void> {
-    if (this.ctx) {
-      if (this.ctx.state === "suspended") await this.ctx.resume();
-      return;
+  private async ensureContext(): Promise<AudioContext> {
+    if (!this.ctx) {
+      const ctx = new AudioContext();
+      this.ctx = ctx;
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -14;
+      compressor.knee.value = 12;
+      compressor.ratio.value = 4;
+      compressor.attack.value = 0.004;
+      compressor.release.value = 0.18;
+      const master = ctx.createGain();
+      master.gain.value = 0.85;
+      master.connect(compressor);
+      compressor.connect(ctx.destination);
+      this.master = master;
+      const convolver = ctx.createConvolver();
+      convolver.buffer = this.impulseResponse(ctx, 2.0);
+      const wet = ctx.createGain();
+      wet.gain.value = 0.16;
+      convolver.connect(wet);
+      wet.connect(compressor);
+      this.reverbInput = convolver;
     }
-    const ctx = new AudioContext();
-    this.ctx = ctx;
-    const compressor = ctx.createDynamicsCompressor();
-    compressor.threshold.value = -14;
-    compressor.knee.value = 12;
-    compressor.ratio.value = 4;
-    compressor.attack.value = 0.004;
-    compressor.release.value = 0.18;
-    const master = ctx.createGain();
-    master.gain.value = 0.85;
-    master.connect(compressor);
-    compressor.connect(ctx.destination);
-    this.master = master;
-    const convolver = ctx.createConvolver();
-    convolver.buffer = this.impulseResponse(ctx, 2.0);
-    const wet = ctx.createGain();
-    wet.gain.value = 0.16;
-    convolver.connect(wet);
-    wet.connect(compressor);
-    this.reverbInput = convolver;
+    // playback must never schedule against a suspended (frozen) clock
+    if (this.ctx.state === "suspended") await this.ctx.resume();
+    return this.ctx;
   }
 
   private impulseResponse(ctx: AudioContext, seconds: number): AudioBuffer {

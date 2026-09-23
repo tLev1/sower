@@ -66,7 +66,10 @@ export interface BarBox {
   readonly x0: number;
   /** Right edge — the barline closing this bar. */
   readonly x1: number;
+  /** Time signature displayed at this bar (system starts + change bars). */
   readonly timeSignature: { readonly numerator: number; readonly denominator: number } | null;
+  /** True when this bar opens a NEW meter mid-system (gets a double barline). */
+  readonly timeSignatureChange: boolean;
   /** Key fifths drawn at this bar's start (only when displayed). */
   readonly keyFifths: number | null;
   /** Key fifths in effect for this bar (accidental logic). */
@@ -149,6 +152,57 @@ interface BeatSeed {
   readonly isRest: boolean;
 }
 
+/**
+ * Standard rest values in ticks (whole, half, quarter, 8th, 16th, 32nd).
+ */
+const REST_TICKS: readonly number[] = [1920, 960, 480, 240, 120, 60];
+
+/**
+ * Fills a gap with rests per standard notation practice (cf. Gould,
+ * "Behind Bars"):
+ *  - an entirely empty measure takes a single whole rest (the whole-bar
+ *    rest, regardless of meter)
+ *  - otherwise the gap is decomposed greedily into the longest standard
+ *    rests that fit; a half rest only appears aligned to the half bar
+ *  - compound meters (x/8, x/16 with a multiple-of-3 numerator) never let a
+ *    rest cross a dotted-beat boundary — each dotted-beat segment is filled
+ *    independently (e.g. 6/8 after a quarter → eighth + quarter + eighth)
+ */
+export function restFillSeeds(
+  start: number,
+  end: number,
+  capacity: number,
+  timeSignature: { readonly numerator: number; readonly denominator: number },
+): BeatSeed[] {
+  if (start <= 0 && end - start >= capacity) {
+    return [{ start: 0, duration: capacity, notes: [], isRest: true }];
+  }
+  const compoundBeat =
+    timeSignature.denominator === 8 && timeSignature.numerator % 3 === 0
+      ? TICKS_PER_QUARTER * 1.5
+      : timeSignature.denominator === 16 && timeSignature.numerator % 3 === 0
+        ? TICKS_PER_QUARTER * 0.75
+        : 0; // 0 = simple meter: single greedy pass over the whole gap
+  const seeds: BeatSeed[] = [];
+  let cursor = Math.max(0, start);
+  while (cursor < end) {
+    const segEnd = compoundBeat > 0
+      ? Math.min(end, (Math.floor(cursor / compoundBeat) + 1) * compoundBeat)
+      : end;
+    let rem = segEnd - cursor;
+    while (rem > 0) {
+      let value = REST_TICKS.find(
+        (t) => t <= rem && t <= (compoundBeat || Infinity) && (t !== 960 || cursor % 960 === 0),
+      ) ?? rem;
+      if (value > rem) value = rem;
+      seeds.push({ start: cursor, duration: value, notes: [], isRest: true });
+      cursor += value;
+      rem -= value;
+    }
+  }
+  return seeds;
+}
+
 /** Groups notes into rhythmic columns, inserting rests to fill the bar. */
 export function groupIntoBeats(notes: readonly Note[], bar: Bar): BeatSeed[] {
   const byStart = new Map<number, Note[]>();
@@ -164,7 +218,7 @@ export function groupIntoBeats(notes: readonly Note[], bar: Bar): BeatSeed[] {
     const group = byStart.get(start);
     if (!group || start >= capacity) break;
     if (start > cursor) {
-      seeds.push({ start: cursor, duration: start - cursor, notes: [], isRest: true });
+      seeds.push(...restFillSeeds(cursor, start, capacity, bar.timeSignature));
     }
     const duration = Math.min(...group.map((n) => n.duration));
     seeds.push({
@@ -176,7 +230,7 @@ export function groupIntoBeats(notes: readonly Note[], bar: Bar): BeatSeed[] {
     cursor = Math.max(cursor, start + duration);
   }
   if (cursor < capacity) {
-    seeds.push({ start: cursor, duration: capacity - cursor, notes: [], isRest: true });
+    seeds.push(...restFillSeeds(cursor, capacity, capacity, bar.timeSignature));
   }
   return seeds;
 }
@@ -330,16 +384,6 @@ function systemLeadWidth(
   return lead;
 }
 
-/** Effective time signature per bar (carries forward). */
-function effectiveTimeSig(score: Score, barIndex: number): Bar["timeSignature"] | null {
-  let sig: Bar["timeSignature"] | null = null;
-  for (let i = 0; i <= barIndex; i++) {
-    const bar = score.bars[i];
-    if (bar?.timeSignature) sig = bar.timeSignature;
-  }
-  return sig;
-}
-
 /**
  * Eighth-note beam group size per meter (standard engraving practice,
  * cf. Gould "Behind Bars"): 4/4 → 4 (half-bar), 3/4 → 3, 2/4 → 2,
@@ -432,7 +476,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     return w;
   });
 
-  // Time signature shown at bar 0 and on changes.
+  // Time signature shown at bar 0, at every change, and at system starts.
   const showTimeAt = (i: number): boolean => {
     const bar = score.bars[i];
     if (!bar) return false;
@@ -443,23 +487,41 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
         prev.timeSignature.denominator !== bar.timeSignature.denominator);
   };
 
+  /** Extra width a mid-system meter-change bar needs for its time block. */
+  const timeChangeLead = (i: number): number => {
+    const bar = score.bars[i];
+    if (!bar) return 0;
+    const digits = Math.max(
+      String(bar.timeSignature.numerator).length,
+      String(bar.timeSignature.denominator).length,
+    );
+    return staffSpace * (1.1 + 2.0 * digits + 0.9);
+  };
+
   // --- Pass 1: wrap bars into systems (greedy; measures are contiguous). ---
   const groups: number[][] = [];
   {
     let group: number[] = [];
     let acc = 0;
     for (let i = 0; i < score.bars.length; i++) {
-      const lead = group.length === 0
+      const isFirst = group.length === 0;
+      const lead = isFirst
         ? systemLeadWidth(hasNotation, hasTab, fifthsPerBar[i] ?? 0, showTimeAt(i), staffSpace)
-        : 0;
+        : showTimeAt(i)
+          ? timeChangeLead(i)
+          : 0;
       const need = Math.max(baseWidths[i] ?? 0, minBarWidth) + lead;
-      if (group.length > 0 && acc + need > contentWidth) {
+      if (!isFirst && acc + need > contentWidth) {
         groups.push(group);
         group = [];
         acc = 0;
+        const wrappedLead = systemLeadWidth(hasNotation, hasTab, fifthsPerBar[i] ?? 0, showTimeAt(i), staffSpace);
+        group.push(i);
+        acc += Math.max(baseWidths[i] ?? 0, minBarWidth) + wrappedLead;
+      } else {
+        group.push(i);
+        acc += need;
       }
-      group.push(i);
-      acc += Math.max(baseWidths[i] ?? 0, minBarWidth);
     }
     if (group.length > 0) groups.push(group);
   }
@@ -496,7 +558,10 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
       showTimeAt(firstBarIndex),
       staffSpace,
     );
-    const widths = barIndexes.map((bi) => Math.max(baseWidths[bi] ?? 0, minBarWidth));
+    const widths = barIndexes.map((bi, k) => {
+      const base = Math.max(baseWidths[bi] ?? 0, minBarWidth);
+      return base + (k > 0 && showTimeAt(bi) ? timeChangeLead(bi) : 0);
+    });
     const totalContent = widths.reduce((a, b) => a + b, 0);
     // the last system leaves room after the final barline for the +/− controls
     const tailReserve = s === groups.length - 1 ? staffSpace * 6.6 : 0;
@@ -512,7 +577,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
       const bar = score.bars[bi];
       if (!bar) continue;
       const x0 = xCursor;
-      const barLead = k === 0 ? lead : 0;
+      const barLead = k === 0 ? lead : showTimeAt(bi) ? timeChangeLead(bi) : 0;
       const contentX = x0 + barLead;
       const innerW = stretched[k] ?? 0;
       const x1 = contentX + innerW;
@@ -552,12 +617,14 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
         };
       });
 
+      const showTime = showTimeAt(bi);
       bars.push({
         index: bi,
         bar,
         x0,
         x1,
-        timeSignature: k === 0 ? (effectiveTimeSig(score, bi) ?? bar.timeSignature) : null,
+        timeSignature: showTime ? bar.timeSignature : null,
+        timeSignatureChange: showTime && k > 0,
         keyFifths: k === 0 ? (fifthsPerBar[bi] ?? 0) : null,
         fifths: fifthsPerBar[bi] ?? 0,
         tracks: trackBars,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Score } from "@stdbd/core";
+import type { Note, Score } from "@stdbd/core";
 import { STANDARD_GUITAR_TUNING, TICKS_PER_QUARTER } from "@stdbd/core";
 import {
   beamGroupSize,
@@ -91,7 +91,7 @@ describe("groupIntoBeats", () => {
     expect(beats[0]?.notes[0]?.fret).toBe(0);
   });
 
-  it("produces a rest for an empty bar", () => {
+  it("produces a single whole rest for an empty bar", () => {
     const score = buildScore();
     const bar = score.bars[0];
     if (!bar) return;
@@ -100,6 +100,51 @@ describe("groupIntoBeats", () => {
     expect(beats[0]?.isRest).toBe(true);
     expect(beats[0]?.duration).toBe(TICKS_PER_QUARTER * 4);
   });
+
+  it("decomposes remainders into standard rests (Gould)", () => {
+    const score = buildScore();
+    const bar = score.bars[0];
+    if (!bar) return;
+    // a quarter note on beat 1 of 4/4 → quarter + half rest (3 quarters)
+    const quarter: Note = {
+      id: 500 as never,
+      pitch: 64,
+      string: 0,
+      fret: 0,
+      start: 0,
+      duration: TICKS_PER_QUARTER,
+      velocity: 100,
+      articulations: [],
+    };
+    const seeds = groupIntoBeats([quarter], bar);
+    expect(seeds).toHaveLength(3);
+    expect(seeds[1]).toMatchObject({ start: TICKS_PER_QUARTER, duration: TICKS_PER_QUARTER, isRest: true });
+    expect(seeds[2]).toMatchObject({ start: TICKS_PER_QUARTER * 2, duration: TICKS_PER_QUARTER * 2, isRest: true });
+  });
+
+  it("keeps compound-meter rests inside dotted beats (6/8)", () => {
+    const score = buildScore();
+    const bar = score.bars[0];
+    if (!bar) return;
+    const compoundBar = { ...bar, timeSignature: { numerator: 6, denominator: 8 } };
+    // a quarter note (eighths 1-2) → eighth + quarter + eighth rests
+    const seeds = groupIntoBeats([quarterNote()], compoundBar);
+    const rests = seeds.filter((s) => s.isRest);
+    expect(rests.map((r) => r.duration)).toEqual([240, 480, 240]);
+  });
+
+  function quarterNote(): Note {
+    return {
+      id: 501 as never,
+      pitch: 64,
+      string: 0,
+      fret: 0,
+      start: 0,
+      duration: TICKS_PER_QUARTER,
+      velocity: 100,
+      articulations: [],
+    };
+  }
 });
 
 describe("beamGroupSize", () => {
@@ -150,6 +195,28 @@ describe("computeLayout", () => {
       const curr = system.bars[i];
       if (prev && curr) expect(curr.x0).toBe(prev.x1);
     }
+  });
+
+  it("displays a meter change on its mid-system bar", () => {
+    const score = buildScore();
+    // change bar 2 to 6/8 — with a wide layout both bars share one system
+    const changed: Score = {
+      ...score,
+      bars: score.bars.map((bar, i) =>
+        i === 1 ? { ...bar, timeSignature: { numerator: 6, denominator: 8 } } : bar,
+      ),
+    };
+    const layout = computeLayout(changed, { width: 1600 });
+    const system = layout.systems[0];
+    if (!system) return;
+    expect(system.bars.length).toBe(2);
+    const changeBar = system.bars[1];
+    if (!changeBar) return;
+    expect(changeBar.timeSignatureChange).toBe(true);
+    expect(changeBar.timeSignature).toEqual({ numerator: 6, denominator: 8 });
+    // the change bar reserves lead width before its first beat column
+    const firstBeat = changeBar.tracks[0]?.beats[0];
+    if (firstBeat) expect(firstBeat.x).toBeGreaterThan(changeBar.x0 + changeBar.tracks[0]!.staffTop * 0);
   });
 
   it("beams eighths in metrical groups (4/4 → groups of 4)", () => {

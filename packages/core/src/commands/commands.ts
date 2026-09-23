@@ -215,11 +215,19 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
       if (index < 0) {
         throw new Error(`Bar ${String(command.barId)} not found`);
       }
-      // a signature change applies from this measure onward (standard notation)
+      // a signature change applies from this measure UNTIL the next differing
+      // signature — later meter changes are preserved (standard notation)
+      const current = score.bars[index]?.timeSignature;
+      let last = index;
+      for (let j = index + 1; j < score.bars.length; j++) {
+        const next = score.bars[j]?.timeSignature;
+        if (next && current && (next.numerator !== current.numerator || next.denominator !== current.denominator)) break;
+        last = j;
+      }
       return {
         ...score,
         bars: score.bars.map((bar, i) =>
-          i >= index
+          i >= index && i <= last
             ? { ...bar, timeSignature: { numerator, denominator } }
             : bar,
         ),

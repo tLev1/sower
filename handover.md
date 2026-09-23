@@ -36,7 +36,7 @@ Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
 | Rendering | **stdBd engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
 | Playback | WebAudio Karplus-Strong synth (v1) | articulation-aware; sample engines plug in via SynthEngine seam later |
 | Fonts | Bravura (public/fonts), Inter Variable + JetBrains Mono Variable (fontsource) | music glyphs + UI/mono type |
-| Tests | Vitest 3 | 50 tests green (27 core + 13 render + 10 web) |
+| Tests | Vitest 3 | 54 tests green (28 core + 16 render + 10 web) |
 | Lint | ESLint flat config, typescript-eslint strictTypeChecked | `any` is an error; `scripts/` ignored |
 | CI | `.github/workflows/ci.yml` | lint → typecheck → test → build |
 | E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** — always launch Edge |
@@ -112,6 +112,7 @@ pnpm build               # typecheck + vite build
 node scripts/inspect-page.mjs     # with dev server running; screenshot → C:\dev\temp\opencode\page.png
 node scripts/interact-test.mjs    # interaction regression (uses real mouse/keys)
 node scripts/probe-sheet-v2.mjs   # instant-play latency + sheet editing batch (15 checks)
+node scripts/probe-playhead-v3.mjs # playhead-at-selection, carry-over notes, rest fill, mid-system meter change
 ```
 
 Git repo on `main`; commit as you go (conventional commits).
@@ -139,14 +140,24 @@ Git repo on `main`; commit as you go (conventional commits).
   quiet), chord strum stagger (~11 ms, low strings first), ±5 cent detune,
   velocity→gain curve, master compressor + generated-impulse reverb send.
   Playhead (glowing line) + auto-scroll while playing; resumes from pause
-  offset; restarts from caret after stop. Sync: all pluck buffers are
-  pre-generated on play (`primeBuffers`) so nothing hitches mid-bar; the
-  emitted position is compensated by `outputLatency + baseLatency` so the
-  playhead tracks what the listener HEARS; playhead ticks are fractional
-  (continuous motion, no per-grid jumps); pause/stop fade out via the
-  master gain (~110 ms) instead of hard-cutting sources. Auto-scroll is
-  vertical-only and smooth (systems always fit the view width; horizontal
-  jumps were the old "glitch when crossing measures").
+  offset; restarts from caret after stop. Sync: the ~1 s of events around
+  the start position pre-generates their pluck buffers synchronously
+  (`primeUpcoming`) and the rest primes in idle chunks, so nothing hitches
+  mid-bar; the playhead moves on the NOTATED grid starting exactly at the
+  selection (no device-latency compensation — it must not appear to wait on
+  long notes); playhead ticks are fractional (continuous motion, no
+  per-grid jumps); pause/stop fade out via the master gain (~110 ms) instead
+  of hard-cutting sources. Notes that began earlier but still SOUND at the
+  start position join in immediately with their remaining duration
+  (`fireCarryOverNotes`) — mid-phrase play has no silent gap. Auto-scroll is
+  vertical-only and smooth (systems always fit the view width).
+- **Notation-accurate rest filling** (Gould, "Behind Bars"): empty measures
+  take a single whole rest; other gaps decompose greedily into the longest
+  standard rests, half rests only aligned to the half bar, and compound
+  meters (x/8, x/16 with a multiple-of-3 numerator) never let a rest cross a
+  dotted-beat boundary (6/8 after a quarter → eighth + quarter + eighth).
+  Unbeamed quarter/half notes have stems but NO flags (flags only exist on
+  eighth values and shorter).
 - **Interaction**: `positionAt(clientX, clientY)` → `{barIndex, tick,
   stringIndex}` from pure layout geometry (exact TAB string under cursor).
   `pointFor(...)` inverse for tests. Engine-drawn caret (thin accent line +
@@ -165,9 +176,10 @@ Git repo on `main`; commit as you go (conventional commits).
 - **Transport editing**: the transport bar has an editable BPM field
   (commit on Enter/blur → `setBarTempo`, clamped 20-400, keeping the current
   beat unit) and a meter selector (`setTimeSignature`, applied from the caret
-  bar onward per notation convention; one undo entry per committed change, not
-  per keystroke). The transport shows the EFFECTIVE notated tempo at the caret
-  bar (`tempoMarkAt` — BPM + unit glyph). Notes overflowing a narrowed meter
+  bar until the NEXT differing signature — later meter changes are
+  preserved; one undo entry per committed change, not per keystroke). The
+  transport shows the EFFECTIVE notated tempo at the caret bar
+  (`tempoMarkAt` — BPM + unit glyph). Notes overflowing a narrowed meter
   stay in the model but are ignored by layout/playback overflow handling
   (known v1 limit).
 - **Tempo beat units (notation-accurate)**: `Bar.tempoUnit` stores the ticks
@@ -185,6 +197,13 @@ Git repo on `main`; commit as you go (conventional commits).
   ~550 ms long-press (touch) opens the score context menu — tempo, time
   signature, insert measure after, delete measure — all targeting the clicked
   measure (`onContextMenu`, `onSheetMarkerClicked` on the engine).
+- **Meter changes mid-system** (classical convention — Beethoven/Mozart/
+  Rachmaninoff): a time-signature change is engraved AT the measure where it
+  begins, even when that bar sits mid-system (digits after the barline, not
+  after clef/key), and the junction before it gets a thin-thin double
+  barline. `BarBox.timeSignature` is set for system starts AND change bars;
+  `BarBox.timeSignatureChange` drives the double barline; layout reserves
+  `timeChangeLead` width for mid-system change bars.
 - **Note-value entry palette**: a persistent duration mode in the status bar
   (whole/half/quarter/eighth/16th/32nd + dot toggle, Bravura glyphs). Every
   placed note uses the selected value until it is changed; changing it while
@@ -240,18 +259,28 @@ Git repo on `main`; commit as you go (conventional commits).
   the player emits `absTick` (bar-start ticks + fractional tick). Clamping
   the playhead per bar (old behavior) froze it at each bar's last beat and
   teleported it across the barline — that was the measure-jump glitch.
-- Sync details: all pluck buffers are pre-generated on play
-  (`primeBuffers`-style: the events around the start position synchronously,
-  the rest in async chunks); the emitted position is compensated by
-  `outputLatency + baseLatency` so the playhead tracks what the listener
-  HEARS; pause/stop fade out via the master gain (~110 ms) instead of
-  hard-cutting sources. Auto-scroll is vertical-only and smooth.
+  Deliberately NOT latency-compensated: the playhead tracks the notated
+  grid from the selection instantly (the earlier compensation made it wait
+  on long notes and start behind the selection).
+- Sync details: the events around the start position generate their buffers
+  synchronously (`primeUpcoming`), the rest in async chunks
+  (`primeRestAsync`); pause/stop fade out via the master gain (~110 ms)
+  instead of hard-cutting sources; carry-over notes (started before the
+  start point, still sounding) fire immediately with their remaining
+  duration. Auto-scroll is vertical-only and smooth.
 - **Tempo with beat units**: playback converts notated marks to quarter-BPM
   via `quarterBpmOf` (`Bar.tempo` = BPM of the unit, `Bar.tempoUnit` = unit
   ticks; missing → quarter). The engraver draws unit glyphs + augmentation
   dot from the metronome-marks SMuFL range; `markerHitAreas(layout)` returns
   the editable-mark rects, and the engine renders them as transparent
   `data-stdb-action` rects in the overlay's `.stdb-btns` group.
+- **Rest filling + meter changes**: `restFillSeeds(start, end, capacity, ts)`
+  in layout.ts encodes the Gould rules (whole rest for empty bars, aligned
+  half rests, compound meters fill per dotted-beat segment); groupIntoBeats
+  uses it for leading gaps and trailing remainders. Meter changes get their
+  own `BarBox.timeSignature` + `timeSignatureChange` (double barline) —
+  `drawTimeSignature` positions digits after clef/key on system starts and
+  right after the barline on mid-system change bars.
 
 ## 6. Critical gotchas (do not re-learn)
 
@@ -304,20 +333,26 @@ Git repo on `main`; commit as you go (conventional commits).
 
 ## 7. Verification status (last run: all green)
 
-- lint / typecheck / 50 unit tests / production build
+- lint / typecheck / 54 unit tests / production build
 - Browser-verified via `scripts/interact-test.mjs` (real Edge):
   - click on TAB number → `Bar 1 · String 1 · Step 1` ✓
   - click empty A2 line → `Bar 1 · String 5 · Step 3` ✓
   - chord tones stay on the beat ✓ (`chordTonesStayed: true`)
   - ↓ after placement returns to placed tick ✓ (`downReturned: true`)
   - new note on empty beat auto-advances ✓ (`createAdvanced: true`)
-- Playhead continuity probe (`probe-sync.mjs`): zero jumps across bar
-  crossings ✓
+- Playhead continuity probe (`probe-sync.mjs`): zero frozen frames, zero
+  jumps across bar crossings ✓
 - Play-from-selection + instant latency (`probe-sheet-v2.mjs`, 15/15):
   first note scheduled 0.9 ms after play(), playhead in the selected bar
   within output-latency + 150 ms; tempo mark click → ♪. = 85 commit
   (`tempoUnit 360`); time-sig click → 7/8 engraved; right-click menu with
   tempo/meter/insert/delete; quarter + dotted-quarter palette durations ✓
+- Playhead/notation batch (`probe-playhead-v3.mjs`, 5/5): playhead starts at
+  the selection (t=1 ms, tick 0) and advances immediately through a quarter
+  note (no latency hold); a note still sounding at a mid-phrase start joins
+  in at once (source fired at 0.7 ms); 4/4 remainder → quarter + half rests;
+  6/8 remainder → eighth + quarter + eighth rests; 6/8 change engraved on
+  its mid-system bar (4/4 then 6/8 digit glyphs) ✓
 - No page errors; favicon served inline.
 
 ## 8. Known gaps / next steps (in order)
