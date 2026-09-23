@@ -15,7 +15,9 @@ export type Command =
   | RemoveNote
   | SetTrackInstrument
   | AddBar
-  | RemoveBar;
+  | RemoveBar
+  | SetBarTempo
+  | SetTimeSignature;
 
 export interface SetNotePitch {
   readonly type: "setNotePitch";
@@ -73,6 +75,20 @@ export interface AddBar {
 export interface RemoveBar {
   readonly type: "removeBar";
   readonly barId: BarId;
+}
+
+export interface SetBarTempo {
+  readonly type: "setBarTempo";
+  readonly barId: BarId;
+  /** BPM marker at this bar; null removes the marker (carries the previous). */
+  readonly tempo: number | null;
+}
+
+export interface SetTimeSignature {
+  readonly type: "setTimeSignature";
+  readonly barId: BarId;
+  readonly numerator: number;
+  readonly denominator: number;
 }
 
 export interface CommandContext {
@@ -148,6 +164,42 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
         throw new Error(`Bar ${String(command.barId)} not found`);
       }
       return { ...score, bars: score.bars.filter((b) => b.id !== command.barId) };
+    }
+    case "setBarTempo": {
+      if (command.tempo !== null && (command.tempo < 20 || command.tempo > 400)) {
+        throw new Error(`Tempo ${String(command.tempo)} out of range (20-400 BPM)`);
+      }
+      if (!hasBar(score, command.barId)) {
+        throw new Error(`Bar ${String(command.barId)} not found`);
+      }
+      return {
+        ...score,
+        bars: score.bars.map((bar) =>
+          bar.id === command.barId ? { ...bar, tempo: command.tempo } : bar,
+        ),
+      };
+    }
+    case "setTimeSignature": {
+      const { numerator, denominator } = command;
+      if (!Number.isInteger(numerator) || numerator < 1 || numerator > 32) {
+        throw new Error(`Invalid time signature numerator ${String(numerator)}`);
+      }
+      if (!Number.isInteger(denominator) || ![2, 4, 8, 16].includes(denominator)) {
+        throw new Error(`Invalid time signature denominator ${String(denominator)}`);
+      }
+      const index = score.bars.findIndex((b) => b.id === command.barId);
+      if (index < 0) {
+        throw new Error(`Bar ${String(command.barId)} not found`);
+      }
+      // a signature change applies from this measure onward (standard notation)
+      return {
+        ...score,
+        bars: score.bars.map((bar, i) =>
+          i >= index
+            ? { ...bar, timeSignature: { numerator, denominator } }
+            : bar,
+        ),
+      };
     }
   }
 }

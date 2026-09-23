@@ -66,8 +66,17 @@ export class WebAudioPlayer implements ScorePlayer {
 
   // -- ScorePlayer API ---------------------------------------------------------
 
-  /** Where playback begins when nothing is paused (caret position). */
+  /**
+   * Where playback begins when nothing is paused (caret position).
+   * A changed selection also clears the pause-resume memory, so the next
+   * play always starts from the freshly selected spot.
+   */
   setStartPosition(pos: { readonly barIndex: number; readonly tick: number } | null): void {
+    const prev = this.startPosition;
+    const changed =
+      (!prev && pos !== null) ||
+      (prev !== null && (pos === null || prev.barIndex !== pos.barIndex || prev.tick !== pos.tick));
+    if (changed) this.offsetSec = 0;
     this.startPosition = pos;
   }
 
@@ -91,8 +100,8 @@ export class WebAudioPlayer implements ScorePlayer {
 
   play(): void {
     if (this.playing) return;
-    const from = this.offsetSec > 0.02 ? this.offsetSec : this.positionSecondsOf(this.startPosition);
-    this.begin(from);
+    const pausedOffset = this.offsetSec > 0.02 ? this.offsetSec : null;
+    this.begin(pausedOffset);
   }
 
   pause(): void {
@@ -131,7 +140,7 @@ export class WebAudioPlayer implements ScorePlayer {
 
   // -- scheduling core -----------------------------------------------------------
 
-  private begin(fromSec: number): void {
+  private begin(pausedOffset: number | null): void {
     const score = this.getScore();
     if (!score) return;
     void this.ensureContext().then(() => {
@@ -145,7 +154,10 @@ export class WebAudioPlayer implements ScorePlayer {
         master.gain.cancelScheduledValues(ctx.currentTime);
         master.gain.setValueAtTime(0.85, ctx.currentTime);
       }
-      this.offsetSec = Math.min(Math.max(0, fromSec), Math.max(0, this.totalSec - 0.05));
+      // start point resolved AFTER the timeline exists — converting the caret
+      // position earlier (empty tempo map) made play-from-selection start at bar 1
+      const from = pausedOffset ?? this.positionSecondsOf(this.startPosition);
+      this.offsetSec = Math.min(Math.max(0, from), Math.max(0, this.totalSec - 0.05));
       this.pointer = this.findIndexAt(this.offsetSec);
       this.startCtxTime = ctx.currentTime + 0.08;
       this.playing = true;
@@ -367,12 +379,14 @@ export class WebAudioPlayer implements ScorePlayer {
 
   private positionSecondsOf(pos: { readonly barIndex: number; readonly tick: number } | null): number {
     if (!pos) return 0;
-    const barIndex = Math.max(0, pos.barIndex);
+    const score = this.getScore();
+    const lastBar = Math.max(0, (score?.bars.length ?? 1) - 1);
+    const barIndex = Math.min(Math.max(0, pos.barIndex), lastBar);
     const barStart = this.barStarts[barIndex] ?? 0;
     const barSec = this.barSeconds[barIndex] ?? 0;
     const ticks = this.barTicks[barIndex] ?? TICKS_PER_QUARTER * 4;
     const secPerTick = barSec / Math.max(ticks, 1);
-    return barStart + pos.tick * secPerTick;
+    return barStart + Math.min(Math.max(0, pos.tick), ticks - 1) * secPerTick;
   }
 
   private locate(pos: number): PlaybackPosition {

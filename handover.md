@@ -140,6 +140,20 @@ Git repo on `main`; commit as you go (conventional commits).
   reserves ledger-line space above/below the staff (`overUp`/`overDown`) so
   high-fret notes (fret 15+ writes 3+ ledger lines) never collide with the
   header or the neighboring system.
+- **Transport editing**: the transport bar has an editable BPM field
+  (commit on Enter/blur → `setBarTempo`, clamped 20-400) and a meter
+  selector (`setTimeSignature`, applied from the caret bar onward per
+  notation convention; one undo entry per committed change, not per
+  keystroke). The transport shows the EFFECTIVE tempo at the caret bar
+  (`tempoAtBar`); the engraver draws tempo marks above the staff on any bar
+  carrying a marker. Notes overflowing a narrowed meter stay in the model
+  but are ignored by layout/playback overflow handling (known v1 limit).
+- **Play-from-selection**: the player resolves the start position into
+  seconds AFTER the tempo map exists (`begin()` rebuilds the timeline
+  first — converting earlier, with an empty tempo map, made playback start
+  at bar 1). A caret change while stopped/paused clears the pause-resume
+  memory, so play always starts from the fresh selection; unchanged
+  caret + pause resumes from the paused spot.
 - **Measure management**: engine-drawn "+/−" buttons after the final barline
   (SVG, hit-testable, − hidden at 1 bar); `addBar`/`removeBar` commands in
   core; the id allocator seeds from the score and re-syncs on reset (avoids

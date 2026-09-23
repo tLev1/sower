@@ -5,8 +5,10 @@ export type {
   AddNote,
   RemoveBar,
   RemoveNote,
+  SetBarTempo,
   SetNoteDuration,
   SetNotePitch,
+  SetTimeSignature,
   SetTrackInstrument,
 } from "./commands.js";
 export { ScoreDocument } from "./score-document.js";

@@ -181,6 +181,20 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     return "applied";
   }, [doc, execute]);
 
+  const setTempo = useCallback((bpm: number): void => {
+    const s = doc.score;
+    const bar = s.bars[caretRef.current.barIndex];
+    if (!bar) return;
+    execute({ type: "setBarTempo", barId: bar.id, tempo: bpm });
+  }, [doc, execute]);
+
+  const setTimeSignature = useCallback((numerator: number, denominator: number): void => {
+    const s = doc.score;
+    const bar = s.bars[caretRef.current.barIndex];
+    if (!bar) return;
+    execute({ type: "setTimeSignature", barId: bar.id, numerator, denominator });
+  }, [doc, execute]);
+
   const removeLastBar = useCallback((): EditResult => {
     const s = doc.score;
     const lastBar = s.bars[s.bars.length - 1];
@@ -347,6 +361,8 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     redo,
     appendBar,
     removeLastBar,
+    setTempo,
+    setTimeSignature,
     handleKeyDown,
   };
 }

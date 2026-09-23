@@ -181,6 +181,7 @@ function drawTrackBar(bar: BarBox, tb: TrackBar, S: number, isFinal: boolean, pa
 
   if (bar.systemStart) drawSystemHeader(bar, tb, S, parts);
   drawBarNumber(bar, tb, S, parts);
+  drawTempoMark(bar, tb, S, parts);
   drawNotation(bar, tb, S, parts);
   drawTabNumbers(bar, tb, parts);
 
@@ -201,6 +202,17 @@ function drawBarNumber(bar: BarBox, tb: TrackBar, S: number, parts: string[]): v
   parts.push(
     uiText(bar.x0 + S * 0.2, y, String(bar.index + 1), { size: 12, weight: 520, fill: engravingTheme.secondaryColor, cls: "stdb-bar-number", mono: true }),
   );
+}
+
+/** Tempo marker above the staff: initial tempo on bar 0, changes on later bars. */
+function drawTempoMark(bar: BarBox, tb: TrackBar, S: number, parts: string[]): void {
+  if (tb.notation && bar.bar.tempo !== null && (bar.index > 0 || !bar.systemStart)) {
+    const y = tb.staffTop - S * 2.4;
+    parts.push(glyph(G.noteQuarterUp, bar.x0 + S * 0.8, y, { size: S * 2.4, anchor: "middle", fill: engravingTheme.secondaryColor }));
+    parts.push(
+      uiText(bar.x0 + S * 2.4, y, `= ${bar.bar.tempo}`, { size: 14, weight: 520, fill: engravingTheme.secondaryColor, cls: "stdb-tempo-mark", mono: true }),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

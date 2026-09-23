@@ -161,4 +161,34 @@ describe("applyCommand", () => {
     expect(next.bars).toHaveLength(1);
     expect(withSecond.bars).toHaveLength(2);
   });
+
+  it("setBarTempo sets and clears the tempo marker", () => {
+    const score = makeScore();
+    const faster = applyCommand(score, { type: "setBarTempo", barId: 1 as never, tempo: 140 }, ctx);
+    expect(faster.bars[0]!.tempo).toBe(140);
+    expect(score.bars[0]!.tempo).toBe(120);
+    const cleared = applyCommand(faster, { type: "setBarTempo", barId: 1 as never, tempo: null }, ctx);
+    expect(cleared.bars[0]!.tempo).toBeNull();
+    expect(() => applyCommand(faster, { type: "setBarTempo", barId: 1 as never, tempo: 900 }, ctx)).toThrow();
+  });
+
+  it("setTimeSignature applies from the target bar onward", () => {
+    const score = makeScore();
+    const withSecond = applyCommand(score, { type: "addBar", afterBarId: null }, ctx);
+    const next = applyCommand(withSecond, {
+      type: "setTimeSignature",
+      barId: 1 as never,
+      numerator: 3,
+      denominator: 4,
+    }, ctx);
+    expect(next.bars[0]!.timeSignature).toEqual({ numerator: 3, denominator: 4 });
+    expect(next.bars[1]!.timeSignature).toEqual({ numerator: 3, denominator: 4 });
+    expect(withSecond.bars[0]!.timeSignature).toEqual({ numerator: 4, denominator: 4 });
+    expect(() => applyCommand(withSecond, {
+      type: "setTimeSignature",
+      barId: 1 as never,
+      numerator: 7,
+      denominator: 5,
+    }, ctx)).toThrow();
+  });
 });

@@ -53,10 +53,14 @@ export function App() {
         </div>
         <TransportBar
           renderer={renderer}
+          score={editor.score}
+          caretBarIndex={editor.caret.barIndex}
           canUndo={doc.canUndo}
           canRedo={doc.canRedo}
           onUndo={editor.undo}
           onRedo={editor.redo}
+          onTempoChange={editor.setTempo}
+          onTimeSignatureChange={editor.setTimeSignature}
         />
       </header>
       <main className="workspace">
