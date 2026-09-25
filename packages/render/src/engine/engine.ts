@@ -119,6 +119,8 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   loadScore(score: Score): void {
     this.score = score;
     this.relayout();
+    // tempo / meter edits apply immediately — even mid-playback
+    this.player.refreshTimeline();
   }
 
   dispose(): void {
@@ -279,6 +281,15 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
 
   onStateChange(listener: (isPlaying: boolean) => void): () => void {
     return this.player.onStateChange(listener);
+  }
+
+  /** Toggles the click track (metronome). */
+  setMetronome(on: boolean): void {
+    this.player.setMetronome(on);
+  }
+
+  get isMetronomeOn(): boolean {
+    return this.player.isMetronomeOn;
   }
 
   /**

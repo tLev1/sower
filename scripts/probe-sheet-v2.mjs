@@ -57,11 +57,15 @@ const playResult = await page.evaluate(() => {
         selectedAt = performance.now() - t0;
       }
     });
+    let aliveMidPlay = false;
+    setTimeout(() => {
+      aliveMidPlay = r.isPlaying;
+    }, 1500);
     r.play();
     setTimeout(() => {
       off();
       AudioBufferSourceNode.prototype.start = origStart;
-      resolve({ firstSourceAt, selectedAt: selectedAt ?? null, latencyMs });
+      resolve({ firstSourceAt, selectedAt: selectedAt ?? null, latencyMs, aliveMidPlay });
     }, 2500);
   });
 });
@@ -76,9 +80,7 @@ check(
   playResult.selectedAt !== null && playResult.selectedAt < (playResult.latencyMs ?? 0) + 150,
   `playhead entered bar 2 at ${playResult.selectedAt ?? "never"}ms`,
 );
-await page.waitForTimeout(500);
-const playing = await page.evaluate(() => window.__stdbRenderer.isPlaying);
-check("playback still running (no early stop)", playing === true);
+check("playback still running (no early stop)", playResult.aliveMidPlay === true);
 await page.evaluate(() => window.__stdbRenderer.stop());
 await page.waitForTimeout(500);
 

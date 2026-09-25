@@ -145,6 +145,23 @@ body {
   border-color: var(--accent);
 }
 
+.metronome-btn {
+  width: 38px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.metronome-btn.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.metronome-btn.on:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
 .divider {
   width: 1px;
   height: 22px;

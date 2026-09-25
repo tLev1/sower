@@ -50,6 +50,7 @@ export function TransportBar({
   onTimeSignatureChange,
 }: TransportBarProps) {
   const [playing, setPlaying] = useState(false);
+  const [metronome, setMetronome] = useState(false);
 
   useEffect(() => {
     if (!renderer) return;
@@ -86,6 +87,34 @@ export function TransportBar({
         aria-label="Stop"
       >
         ■
+      </button>
+      <button
+        className={metronome ? "tool-btn metronome-btn on" : "tool-btn metronome-btn"}
+        onClick={() => {
+          const next = !metronome;
+          setMetronome(next);
+          renderer?.setMetronome(next);
+        }}
+        disabled={!renderer}
+        aria-pressed={metronome}
+        aria-label="Metronome"
+        title="Metronome"
+      >
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <path d="M7.2 3.5h5.6l3.7 13H3.5z" />
+          <path d="M10 15.8 13.2 6.2" />
+          <circle cx="12.1" cy="9.2" r="1.15" fill="currentColor" stroke="none" />
+        </svg>
       </button>
       <div className="divider" />
       <button className="tool-btn" onClick={onUndo} disabled={!canUndo} aria-label="Undo">

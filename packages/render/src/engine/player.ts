@@ -24,7 +24,7 @@ export interface PlaybackPosition {
   readonly totalSeconds: number;
 }
 
-type PluckStyle = "normal" | "palmMute" | "letRing";
+type PluckStyle = "normal" | "palmMute" | "letRing" | "staccato";
 
 interface NoteEvent {
   readonly sec: number;
@@ -34,6 +34,13 @@ interface NoteEvent {
   readonly strum: number;
   readonly style: PluckStyle;
   readonly trackId: number;
+  /** Visual string index (0 = highest) — enforces per-string monophony. */
+  readonly string: number | null;
+}
+
+interface ClickEvent {
+  readonly sec: number;
+  readonly accent: boolean;
 }
 
 const LOOKAHEAD_SEC = 0.4;
@@ -45,12 +52,14 @@ export class WebAudioPlayer implements ScorePlayer {
   private reverbInput: AudioNode | null = null;
   private readonly buses = new Map<number, GainNode>();
   private events: readonly NoteEvent[] = [];
+  private clicks: readonly ClickEvent[] = [];
   private barStarts: readonly number[] = [];
   private barStartTicks: readonly number[] = [];
   private barTicks: readonly number[] = [];
   private barSeconds: readonly number[] = [];
   private totalSec = 0.001;
   private pointer = 0;
+  private clickPointer = 0;
   /** Score the current timeline was built from (avoids redundant rebuilds). */
   private timelineScore: Score | null = null;
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -59,10 +68,15 @@ export class WebAudioPlayer implements ScorePlayer {
   private offsetSec = 0;
   private playing = false;
   private startPosition: { readonly barIndex: number; readonly tick: number } | null = null;
+  private metronomeOn = false;
   private readonly stateListeners = new Set<(isPlaying: boolean) => void>();
   private readonly positionListeners = new Set<(pos: PlaybackPosition | null) => void>();
   private readonly bufferCache = new Map<string, AudioBuffer>();
+  /** Sustain-loop start (seconds) per buffer key — clickless loop window. */
+  private readonly loopStarts = new Map<string, number>();
   private readonly activeSources = new Set<AudioBufferSourceNode>();
+  /** Sounding source per (track, string) — a new note chokes the previous. */
+  private readonly activeByString = new Map<string, { src: AudioBufferSourceNode; env: GainNode }>();
 
   constructor(private readonly getScore: () => Score | null) {}
 
@@ -98,6 +112,39 @@ export class WebAudioPlayer implements ScorePlayer {
 
   get isPlaying(): boolean {
     return this.playing;
+  }
+
+  get isMetronomeOn(): boolean {
+    return this.metronomeOn;
+  }
+
+  /**
+   * Toggles the click track. Clicks follow the musical sheet only — the
+   * notated beat grid of the score (accented downbeats), its tempo map and
+   * meter changes, during playback. No free-running clicks of its own.
+   */
+  setMetronome(on: boolean): void {
+    this.metronomeOn = on;
+  }
+
+  /**
+   * Rebuilds the timeline from the current score while preserving the
+   * musical position (absolute tick). Tempo / meter edits take effect
+   * immediately — even mid-playback.
+   */
+  refreshTimeline(): void {
+    const score = this.getScore();
+    if (!score || score === this.timelineScore) return;
+    const wasPlaying = this.playing;
+    const absTick = this.locate(wasPlaying ? this.virtualNow() : this.offsetSec).absTick;
+    this.rebuildTimeline(score);
+    this.timelineScore = score;
+    this.offsetSec = this.secondsOfAbsTick(absTick);
+    if (wasPlaying && this.ctx) {
+      this.startCtxTime = this.ctx.currentTime;
+      this.pointer = this.findIndexAt(this.offsetSec);
+      this.clickPointer = this.findClickIndexAt(this.offsetSec);
+    }
   }
 
   play(): void {
@@ -145,6 +192,7 @@ export class WebAudioPlayer implements ScorePlayer {
     this.playing = false;
     this.offsetSec = 0;
     this.pointer = 0;
+    this.clickPointer = 0;
     this.emitPosition(null);
     this.emitState();
   }
@@ -188,6 +236,7 @@ export class WebAudioPlayer implements ScorePlayer {
     }
     this.offsetSec = Math.min(Math.max(0, from), Math.max(0, this.totalSec - 0.05));
     this.pointer = this.findIndexAt(this.offsetSec);
+    this.clickPointer = this.findClickIndexAt(this.offsetSec);
     this.startCtxTime = ctx.currentTime + 0.03;
     this.playing = true;
     this.emitState();
@@ -210,6 +259,7 @@ export class WebAudioPlayer implements ScorePlayer {
         this.playing = false;
         this.offsetSec = 0;
         this.pointer = 0;
+        this.clickPointer = 0;
         this.emitPosition(null);
         this.emitState();
         return;
@@ -286,9 +336,22 @@ export class WebAudioPlayer implements ScorePlayer {
       const ev = this.events[this.pointer];
       if (!ev || ev.sec + ev.strum >= horizon) break;
       this.pointer++;
-      const at = this.startCtxTime + (ev.sec + ev.strum);
+      // `startCtxTime` is the audio-clock time of position `offsetSec`, so the
+      // event's score-seconds must be offset-relative — without the
+      // subtraction every sound arrived `offsetSec` seconds late (playhead
+      // far ahead of the audio when starting from a selection)
+      const at = this.startCtxTime + (ev.sec + ev.strum - this.offsetSec);
       if (at < ctx.currentTime - 0.05) continue;
       this.fireNote(ev, at);
+    }
+    while (this.clickPointer < this.clicks.length) {
+      const click = this.clicks[this.clickPointer];
+      if (!click || click.sec >= horizon) break;
+      this.clickPointer++;
+      if (!this.metronomeOn) continue;
+      const at = this.startCtxTime + (click.sec - this.offsetSec);
+      if (at < ctx.currentTime - 0.02) continue;
+      this.fireClick(click.accent, at);
     }
   }
 
@@ -296,20 +359,46 @@ export class WebAudioPlayer implements ScorePlayer {
     const ctx = this.ctx;
     const bus = this.busFor(ev.trackId);
     if (!ctx || !bus) return;
+    // per-string monophony: a new note on a string ends the previous one
+    // there (guitar behavior — sequential notes never overlap)
+    if (ev.string !== null) this.chokeString(ev.trackId, ev.string, at);
+    // staccato shares the normal pluck timbre — only its length differs
+    const style = ev.style === "staccato" ? "normal" : ev.style;
+    const key = `${ev.pitch}:${style}`;
     const src = ctx.createBufferSource();
-    src.buffer = this.pluckBuffer(ev.pitch, ev.style);
+    src.buffer = this.pluckBuffer(ev.pitch, style);
+    // sustain loop (SF2-style): hold any note length at any pitch
+    src.loop = true;
+    src.loopStart = this.loopStarts.get(key) ?? 0;
+    src.loopEnd = src.buffer.duration;
     src.playbackRate.value = Math.pow(2, ((Math.random() * 2 - 1) * 5) / 1200);
     const env = ctx.createGain();
-    env.gain.setValueAtTime(this.gainFor(ev.velocity), at);
-    const release = Math.max(ev.durSec, 0.06);
-    env.gain.setTargetAtTime(0.0001, at + release, 0.13);
+    const level = this.gainFor(ev.velocity);
+    // alphaTab note-length semantics: the note SOUNDS its full notated
+    // duration, then a short natural release; articulations shorten the
+    // length (palm-mute ≈ fixed short, staccato = half, let-ring extends)
+    const soundDur =
+      ev.style === "palmMute" ? Math.min(ev.durSec, 0.1) :
+      ev.style === "staccato" ? Math.max(ev.durSec * 0.5, 0.05) :
+      ev.style === "letRing" ? ev.durSec + 0.35 :
+      ev.durSec;
+    const release = ev.style === "letRing" ? 0.28 : ev.style === "palmMute" ? 0.06 : 0.12;
+    env.gain.setValueAtTime(level, at);
+    env.gain.setValueAtTime(level, at + soundDur);
+    env.gain.linearRampToValueAtTime(0.0001, at + soundDur + release);
     src.connect(env);
     env.connect(bus);
     src.start(at);
-    src.stop(at + release + 1.5);
+    src.stop(at + soundDur + release + 0.12);
     this.activeSources.add(src);
+    const entry = { src, env };
+    const stringKey = ev.string === null ? null : `${ev.trackId}:${ev.string}`;
+    if (stringKey !== null) this.activeByString.set(stringKey, entry);
     src.onended = () => {
       this.activeSources.delete(src);
+      if (stringKey !== null && this.activeByString.get(stringKey)?.src === src) {
+        this.activeByString.delete(stringKey);
+      }
       try {
         src.disconnect();
         env.disconnect();
@@ -319,9 +408,68 @@ export class WebAudioPlayer implements ScorePlayer {
     };
   }
 
+  /** Cuts the sounding note on a string (fast fade + stop) — no overlap. */
+  private chokeString(trackId: number, string: number, at: number): void {
+    const key = `${trackId}:${string}`;
+    const prev = this.activeByString.get(key);
+    if (!prev) return;
+    this.activeByString.delete(key);
+    try {
+      prev.env.gain.cancelScheduledValues(at);
+      prev.env.gain.setValueAtTime(prev.env.gain.value, at);
+      prev.env.gain.linearRampToValueAtTime(0.0001, at + 0.015);
+      prev.src.stop(at + 0.05);
+    } catch {
+      /* already ended */
+    }
+  }
+
   private gainFor(velocity: number): number {
     const v = Math.min(1, Math.max(0, velocity / 127));
     return 0.22 + 0.6 * Math.pow(v, 1.35);
+  }
+
+  // -- metronome ---------------------------------------------------------------------
+
+  /** Short woodblock-ish ping (accent = downbeat). */
+  private clickBuffer(accent: boolean): AudioBuffer {
+    const key = accent ? "click:accent" : "click:normal";
+    const cached = this.bufferCache.get(key);
+    if (cached) return cached;
+    const ctx = this.ctx;
+    if (!ctx) throw new Error("no audio context");
+    const sr = ctx.sampleRate;
+    const len = Math.floor(sr * 0.05);
+    const buf = ctx.createBuffer(1, len, sr);
+    const data = buf.getChannelData(0);
+    const f = accent ? 1660 : 1100;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      const env = Math.exp(-t * (accent ? 85 : 110));
+      const tick = i < 24 ? (Math.random() * 2 - 1) * (1 - i / 24) * 0.35 : 0;
+      data[i] = Math.sin(2 * Math.PI * f * t) * env * (accent ? 0.5 : 0.34) + tick * env;
+    }
+    this.bufferCache.set(key, buf);
+    return buf;
+  }
+
+  private fireClick(accent: boolean, at: number): void {
+    const ctx = this.ctx;
+    const master = this.master;
+    if (!ctx || !master) return;
+    const src = ctx.createBufferSource();
+    src.buffer = this.clickBuffer(accent);
+    src.connect(master);
+    src.start(at);
+    this.activeSources.add(src);
+    src.onended = () => {
+      this.activeSources.delete(src);
+      try {
+        src.disconnect();
+      } catch {
+        /* graph already torn down */
+      }
+    };
   }
 
   // -- audio graph -----------------------------------------------------------------
@@ -391,6 +539,13 @@ export class WebAudioPlayer implements ScorePlayer {
 
   // -- plucked-string synthesis (Karplus-Strong) --------------------------------------
 
+  /**
+   * Karplus-Strong pluck with alphaTab/SF2-style sustain semantics: the ring
+   * length is pitch-INDEPENDENT (2 s, gently decaying) and the periodic tail
+   * is looped by the source (`loopStarts`), so every note can hold its full
+   * notated duration at any pitch — note length comes from the note-off,
+   * never from how fast a pitch's buffer happens to run out.
+   */
   private pluckBuffer(pitch: number, style: PluckStyle): AudioBuffer {
     const ctx = this.ctx;
     if (!ctx) throw new Error("no audio context");
@@ -401,10 +556,10 @@ export class WebAudioPlayer implements ScorePlayer {
     const sr = ctx.sampleRate;
     const f0 = 440 * Math.pow(2, (pitch - 69) / 12);
     const period = Math.max(2, Math.round(sr / f0));
-    // excitation periods: palm-mute is short and dark, let-ring is long
-    const sustainCycles = style === "palmMute" ? 26 : style === "letRing" ? 320 : 150;
-    const decay = Math.exp(-1 / (period * sustainCycles * 0.55));
-    const len = Math.min(Math.floor(sr * 3.2), Math.floor(period * sustainCycles * 2.4));
+    // exponential amplitude decay: exp(-t/τ) — pluck-like, τ per style
+    const tau = style === "palmMute" ? 0.16 : style === "letRing" ? 4.5 : 2.6;
+    const decay = Math.exp(-period / (sr * tau));
+    const len = Math.floor(sr * 2.0);
     const buf = ctx.createBuffer(1, len, sr);
     const data = buf.getChannelData(0);
 
@@ -433,6 +588,10 @@ export class WebAudioPlayer implements ScorePlayer {
       data[i] = v * scale;
     }
 
+    // seamless sustain loop: an exact integer number of periods from the
+    // steady tail — the KS tail is period-continuous, so looping it is clickless
+    const loopPeriods = Math.max(1, Math.ceil(0.08 * sr / period));
+    this.loopStarts.set(key, Math.max(0, len - loopPeriods * period) / sr);
     this.bufferCache.set(key, buf);
     return buf;
   }
@@ -527,6 +686,7 @@ export class WebAudioPlayer implements ScorePlayer {
       }
     }
     this.activeSources.clear();
+    this.activeByString.clear();
   }
 
   private findIndexAt(sec: number): number {
@@ -540,6 +700,29 @@ export class WebAudioPlayer implements ScorePlayer {
       else hi = mid;
     }
     return lo;
+  }
+
+  private findClickIndexAt(sec: number): number {
+    let i = 0;
+    while (i < this.clicks.length && (this.clicks[i]?.sec ?? 0) < sec) i++;
+    return i;
+  }
+
+  /** Inverse of `locate`'s absolute-tick mapping, on the current bar map. */
+  private secondsOfAbsTick(absTick: number): number {
+    let barIndex = 0;
+    for (let i = 0; i < this.barStartTicks.length; i++) {
+      const start = this.barStartTicks[i];
+      if (start !== undefined && start <= absTick) barIndex = i;
+      else break;
+    }
+    const barStart = this.barStarts[barIndex] ?? 0;
+    const barAbs = this.barStartTicks[barIndex] ?? 0;
+    const ticks = this.barTicks[barIndex] ?? TICKS_PER_QUARTER * 4;
+    const barSec = this.barSeconds[barIndex] ?? 0;
+    const secPerTick = barSec / Math.max(ticks, 1);
+    const tick = Math.min(Math.max(0, absTick - barAbs), Math.max(0, ticks - 1));
+    return barStart + tick * secPerTick;
   }
 
   /** Rebuilds flattened note events + bar timing from the current score. */
@@ -587,7 +770,9 @@ export class WebAudioPlayer implements ScorePlayer {
             ? "palmMute"
             : note.articulations.some((a) => a.kind === "letRing")
               ? "letRing"
-              : "normal";
+              : note.articulations.some((a) => a.kind === "staccato")
+                ? "staccato"
+                : "normal";
           const ev: NoteEvent = {
             sec: barStart + note.start * secPerTick,
             durSec: note.duration * secPerTick,
@@ -596,6 +781,7 @@ export class WebAudioPlayer implements ScorePlayer {
             strum: 0,
             style,
             trackId: trackIndex,
+            string: note.string,
           };
           events.push(ev);
           const key = `${barIndex}:${note.start}`;
@@ -605,6 +791,25 @@ export class WebAudioPlayer implements ScorePlayer {
         }
       });
     });
+
+    // metronome clicks on the notated beat grid (accent = downbeat)
+    const clicks: ClickEvent[] = [];
+    for (let barIndex = 0; barIndex < barSeconds.length; barIndex++) {
+      const bar = score.bars[barIndex];
+      if (!bar) continue;
+      const ticks = barTicks[barIndex] ?? TICKS_PER_QUARTER * 4;
+      const barSec = barSeconds[barIndex] ?? 0;
+      const secPerTick = barSec / Math.max(ticks, 1);
+      const beatTicks = metronomeBeatTicks(bar.timeSignature);
+      const beats = Math.max(1, Math.round(ticks / beatTicks));
+      for (let k = 0; k < beats; k++) {
+        clicks.push({
+          sec: (barStarts[barIndex] ?? 0) + k * beatTicks * secPerTick,
+          accent: k === 0,
+        });
+      }
+    }
+    this.clicks = clicks;
 
     // strum stagger: lowest pitch first, ~11ms apart
     for (const arr of grouped.values()) {
@@ -616,6 +821,16 @@ export class WebAudioPlayer implements ScorePlayer {
     events.sort((a, b) => a.sec + a.strum - (b.sec + b.strum));
     this.events = events;
     const last = events[events.length - 1];
-    this.totalSec = last ? last.sec + last.durSec + 0.7 : 0.001;
+    this.totalSec = last ? last.sec + last.durSec + 0.35 : 0.001;
   }
+}
+
+/**
+ * Metronome pulse per meter: the notated beat unit (denominator note in
+ * simple meters) or the dotted-quarter pulse in compound x/8 / x/16 meters.
+ */
+function metronomeBeatTicks(ts: { readonly numerator: number; readonly denominator: number }): number {
+  const unit = (TICKS_PER_QUARTER * 4) / ts.denominator;
+  if ((ts.denominator === 8 || ts.denominator === 16) && ts.numerator % 3 === 0) return unit * 3;
+  return unit;
 }

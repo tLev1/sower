@@ -89,6 +89,9 @@ C:\dev\stdBd
 │   ├── probe-transport.mjs    play-from-selection + tempo/meter edit verification
 │   ├── probe-sheet-v2.mjs     instant-play latency, sheet popovers, context menu,
 │   │                          duration palette (the 2026-09 batch)
+│   ├── probe-player.mjs       player correctness: offset-relative scheduling,
+│   │                          note-length sustain (alphaTab semantics),
+│   │                          BPM scaling + live edits, sheet-following metronome
 │   ├── visual-v2.mjs          screenshots: tempo popover, 7/8 sheet, context menu
 │   ├── probe-sync.mjs         playhead continuity sampling (frozen-frame / jump detector)
 │   ├── probe-buttons.mjs      measure +/− controls (real mouse clicks)
@@ -136,21 +139,35 @@ Git repo on `main`; commit as you go (conventional commits).
   title/artist/tempo header, bar numbers at system starts, per-bar tempo
   marks, final double barline.
 - **Playback (WebAudio v1)**: Karplus-Strong plucked-string synth with
-  articulation awareness (palmMute → short+dark, letRing → long, ghost →
-  quiet), chord strum stagger (~11 ms, low strings first), ±5 cent detune,
-  velocity→gain curve, master compressor + generated-impulse reverb send.
-  Playhead (glowing line) + auto-scroll while playing; resumes from pause
-  offset; restarts from caret after stop. Sync: the ~1 s of events around
-  the start position pre-generates their pluck buffers synchronously
-  (`primeUpcoming`) and the rest primes in idle chunks, so nothing hitches
-  mid-bar; the playhead moves on the NOTATED grid starting exactly at the
-  selection (no device-latency compensation — it must not appear to wait on
-  long notes); playhead ticks are fractional (continuous motion, no
-  per-grid jumps); pause/stop fade out via the master gain (~110 ms) instead
-  of hard-cutting sources. Notes that began earlier but still SOUND at the
-  start position join in immediately with their remaining duration
-  (`fireCarryOverNotes`) — mid-phrase play has no silent gap. Auto-scroll is
-  vertical-only and smooth (systems always fit the view width).
+  articulation awareness (palmMute → short+dark, letRing extends, staccato →
+  half length, ghost → quiet), chord strum stagger (~11 ms, low strings
+  first), ±5 cent detune, velocity→gain curve, master compressor +
+  generated-impulse reverb send. **Note length follows alphaTab's mechanism**
+  (`MidiFileGenerator._getNoteDuration` + SF2 sample loops): every note
+  SOUNDS its full notated duration on a pitch-independent 2 s sustain ring
+  whose periodic KS tail is looped seamlessly by the source, then a short
+  natural release (~120 ms) — note length comes from the note-off, never
+  from how fast a pitch's buffer runs out (the old buffers died at
+  0.55–3.2 s depending on pitch). Articulations shorten like alphaTab:
+  palm-mute ≈ fixed 100 ms, staccato = half, let-ring = duration + tail.
+  A new note on the same string chokes the previous one (per-string
+  monophony — sequential notes never overlap). Playhead (glowing line) +
+  auto-scroll while playing; resumes from pause offset; restarts from caret
+  after stop. **Scheduling is offset-relative** (`startCtxTime + ev.sec -
+  offsetSec`) — the old absolute form delayed all sound by the selection's
+  absolute time (the notorious "offset" bug) and left the playhead ahead of
+  the audio. The ~1 s of events around the start position pre-generate their
+  pluck buffers synchronously (`primeUpcoming`) and the rest primes in idle
+  chunks; the playhead moves on the NOTATED grid starting exactly at the
+  selection; playhead ticks are fractional (continuous motion); pause/stop
+  fade out via the master gain (~110 ms). Notes that began earlier but still
+  sound at the start position join in with their remaining duration.
+  Tempo/meter edits apply LIVE (`refreshTimeline` re-anchors at the same
+  absolute tick, even mid-playback). **Metronome**: toggle in the transport
+  (pendulum icon) — the click follows the MUSICAL SHEET only: the notated
+  beat grid during playback (accented downbeats, compound x/8/x/16 pulse on
+  dotted beats, tempo/meter changes honored). No free-running clicks of its
+  own while the music is stopped.
 - **Notation-accurate rest filling** (Gould, "Behind Bars"): empty measures
   take a single whole rest; other gaps decompose greedily into the longest
   standard rests, half rests only aligned to the half bar, and compound
@@ -322,11 +339,26 @@ Git repo on `main`; commit as you go (conventional commits).
    for anything that needs the AudioContext to resume.
 8. Tests use non-null assertions freely (`**/test/**` eslint override);
    production code must not.
-9. **Bravura vertical metrics in HTML**: music glyphs inside text spans get
+9. **Scheduler time base**: `startCtxTime` is the audio-clock time of
+   `offsetSec`. An event at score-seconds `ev.sec` MUST be scheduled at
+   `startCtxTime + (ev.sec - offsetSec + strum)`. The form
+   `startCtxTime + ev.sec` delays every sound by `offsetSec` (≈5 s when
+   playing from bar 2 of the demo) and leaves the playhead ahead of the
+   audio — that was the long-standing "offset / notes not playing" bug.
+   `probe-player.mjs` asserts first-onset < 120 ms after play.
+10. **Note length comes from the note-off, not the buffer**: pluck buffers
+    are a uniform 2 s pitch-independent ring with the periodic KS tail
+    looped seamlessly (`loopStarts` = integer periods) so any duration
+    sustains at any pitch; the envelope holds the level for the notated
+    duration and releases in ~120 ms (alphaTab semantics). Never make the
+    buffer length pitch-dependent again (high notes died at 0.55 s) and
+    never reintroduce free-ringing tails (they smear the rhythm). Same-string
+    onsets choke the previous source (per-string monophony).
+11. **Bravura vertical metrics in HTML**: music glyphs inside text spans get
    a ~2.4em line box — global.css clamps `line-height: 1` on
    `.duration-btn`, `.glyph-btn`, `.sheet-menu-glyph`, `.glyph-preview`,
    `.field-icon` or buttons stretch to double height.
-10. **Headless test audio quirk**: the first AudioContext `resume()` in a
+12. **Headless test audio quirk**: the first AudioContext `resume()` in a
     fresh headless Edge page takes ~600 ms; `probe-sheet-v2.mjs` does a
     warm-up play first, mirroring real usage where `prewarm()` runs on the
     first user gesture.
@@ -334,6 +366,15 @@ Git repo on `main`; commit as you go (conventional commits).
 ## 7. Verification status (last run: all green)
 
 - lint / typecheck / 54 unit tests / production build
+- Player correctness (`probe-player.mjs`, 8/8): first note audible 33 ms
+  after play from a late-bar selection (the old scheduler delayed sound by
+  the selection's absolute time ≈5 s); notes sound their full notated length
+  on a pitch-independent 2.00 s sustain ring (all buffers equal — was
+  0.55–3.2 s pitch-dependent, so note length had nothing to do with the
+  notation) with a ~120 ms release; eighths spaced 312 ms @96 / 156 ms @192
+  (2× ratio) and a mid-playback tempo edit slows them live; metronome is
+  silent while stopped and clicks the sheet's beat grid (625 ms) during
+  playback ✓
 - Browser-verified via `scripts/interact-test.mjs` (real Edge):
   - click on TAB number → `Bar 1 · String 1 · Step 1` ✓
   - click empty A2 line → `Bar 1 · String 5 · Step 3` ✓

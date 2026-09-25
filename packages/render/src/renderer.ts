@@ -28,6 +28,9 @@ export interface ScorePlayer {
   get isPlaying(): boolean;
   /** Subscribes to play/pause changes; returns unsubscribe function. */
   onStateChange(listener: (isPlaying: boolean) => void): () => void;
+  /** Toggles the click track (metronome). */
+  setMetronome(on: boolean): void;
+  get isMetronomeOn(): boolean;
 }
 
 /** A click position on the score, mapped into core-model coordinates. */
