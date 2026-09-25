@@ -3,13 +3,16 @@ export { applyCommand } from "./commands.js";
 export type {
   AddBar,
   AddNote,
+  AddRest,
   RemoveBar,
   RemoveNote,
   SetBarTempo,
   SetNoteDuration,
   SetNotePitch,
+  SetRestDuration,
   SetTimeSignature,
   SetTrackInstrument,
+  ToggleNoteArticulation,
 } from "./commands.js";
 export { ScoreDocument } from "./score-document.js";
 export type { ScoreDocumentOptions } from "./score-document.js";

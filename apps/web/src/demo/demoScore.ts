@@ -1,5 +1,5 @@
-import type { Score } from "@stdbd/core";
-import { STANDARD_GUITAR_TUNING, TICKS_PER_QUARTER } from "@stdbd/core";
+import type { Score } from "@sower/core";
+import { STANDARD_GUITAR_TUNING, TICKS_PER_QUARTER } from "@sower/core";
 
 /**
  * Minimal demo score: one guitar track, two bars of an E minor pentatonic run.
@@ -69,7 +69,7 @@ export function buildDemoScore(): Score {
 
   return {
     title: "Em Pentatonic Warmup",
-    artist: "stdBd demo",
+    artist: "Sower demo",
     tracks: [
       {
         id: 1 as never,

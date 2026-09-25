@@ -32,10 +32,10 @@ Build the rendering engine from scratch inside `packages/render/src/engine`:
 - `engraving.ts` — layout → inline SVG. Bravura (SMuFL) glyphs for all
   notation symbols; aligned notation + tablature staves; proportional beat
   spacing; slanted beams with duration-aware secondary beams; premium
-  dark-theme colors from `@stdbd/ui` tokens.
-- `engine.ts` — `StdbdEngine`: mount/load/dispose, click → `ClickedPosition`
+  dark-theme colors from `@sower/ui` tokens.
+- `engine.ts` — `SowerEngine`: mount/load/dispose, click → `ClickedPosition`
   resolution, caret + playhead overlays (drawn by the engine itself),
-  ResizeObserver relayout, `window.__stdbRenderer` test hook.
+  ResizeObserver relayout, `window.__sowerRenderer` test hook.
 - `player.ts` — `WebAudioPlayer`: Karplus-Strong plucked-string synthesis,
   articulation-aware (palm-mute, let-ring, ghost), tempo map, lookahead
   scheduler on the audio clock, per-frame position reporting.

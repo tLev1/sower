@@ -1,4 +1,4 @@
-import type { Score } from "@stdbd/core";
+import type { Score } from "@sower/core";
 
 /**
  * Adapter contract for score rendering. Implementations live in

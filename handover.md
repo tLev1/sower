@@ -1,4 +1,4 @@
-# stdBd — Handover Document
+# Sower — Handover Document
 
 > Purpose: resume development in a fresh agent session. Read this first, then
 > `docs/ROADMAP.md` and `docs/ARCHITECTURE.md`.
@@ -22,8 +22,7 @@ multi-instrumentalist (guitar main, bass, piano, drums, violin), producer
 (Logic/Cubase/Studio One/Pro Tools/FL). Solo developer. Building in public
 planned from first usable milestone.
 
-Name is not final — candidates: **Adnoto** (top pick), Selah, Jubal, Tabula,
-Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
+Name: **Sower** (decided). Repository folder: `C:\dev\stdBd`.
 
 ## 2. Stack & environment
 
@@ -33,10 +32,10 @@ Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
 | Node | v24 LTS via Scoop | a second `nodejs` install exists in PATH but has no pnpm |
 | Language | TypeScript ~5.9.3, strict + noUncheckedIndexedAccess | **Do NOT upgrade to TS 7** — typescript-eslint doesn't support it yet |
 | UI | React 19 + Vite 8 (rolldown) | score canvas is plain TS/DOM, React only wraps chrome |
-| Rendering | **stdBd engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
+| Rendering | **Sower engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
 | Playback | WebAudio Karplus-Strong synth (v1) | articulation-aware; sample engines plug in via SynthEngine seam later |
 | Fonts | Bravura (public/fonts), Inter Variable + JetBrains Mono Variable (fontsource) | music glyphs + UI/mono type |
-| Tests | Vitest 3 | 59 tests green (28 core + 19 render + 12 web) |
+| Tests | Vitest 3 | 66 tests green (32 core + 22 render + 12 web) |
 | Lint | ESLint flat config, typescript-eslint strictTypeChecked | `any` is an error; `scripts/` ignored |
 | CI | `.github/workflows/ci.yml` | lint → typecheck → test → build |
 | E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** — always launch Edge |
@@ -73,14 +72,14 @@ C:\dev\stdBd
 │       ├── engraving.ts       layout → inline SVG (Bravura glyphs, TAB staff,
 │       │                      beams, rests, header, metronome tempo marks)
 │       │                      + markerHitAreas for the editable marks
-│       ├── engine.ts          StdbdEngine: mount/load/positionAt/setCaret/
+│       ├── engine.ts          SowerEngine: mount/load/positionAt/setCaret/
 │       │                      setPlayhead/onPositionChanged/prewarm,
 │       │                      sheet-marker clicks, context menu (right-click
 │       │                      + touch long-press), dispose
 │       ├── player.ts          WebAudioPlayer (Karplus-Strong, tempo map with
 │       │                      beat units, lookahead scheduler, prewarm)
 │       ├── smufl.ts           SMuFL codepoints (Bravura, incl. metronome marks)
-│       └── theme.ts           engraving colors from @stdbd/ui tokens
+│       └── theme.ts           engraving colors from @sower/ui tokens
 ├── packages/audio/            SynthEngine + LatencyProbe contracts (no impl yet)
 ├── packages/ui/               design tokens (colors/motion/spacing + liveInput budgets)
 ├── scripts/
@@ -114,7 +113,7 @@ pnpm test                # Vitest, all packages (46 tests)
 pnpm build               # typecheck + vite build
 node scripts/inspect-page.mjs     # with dev server running; screenshot → C:\dev\temp\opencode\page.png
 node scripts/interact-test.mjs    # interaction regression (uses real mouse/keys)
-node scripts/probe-sheet-v2.mjs   # instant-play latency + sheet editing batch (15 checks)
+node scripts/probe-sheet-v2.mjs   # instant-play latency + sheet editing batch (28 checks)
 node scripts/probe-playhead-v3.mjs # playhead-at-selection, carry-over notes, rest fill, mid-system meter change
 ```
 
@@ -130,7 +129,7 @@ Git repo on `main`; commit as you go (conventional commits).
   `ScoreDocument` (snapshot undo/redo, subscribe, reset).
 
 ### Phase 1a — Guitar tab editing (complete, NEW ENGINE)
-- **Rendering (stdBd engine)**: single-track scores render aligned notation +
+- **Rendering (Sower engine)**: single-track scores render aligned notation +
   TAB staves. Bravura glyphs (clef, time sig, noteheads, rests, accidentals,
   key sigs, tempo marks), JetBrains Mono for TAB fret numbers + bar numbers,
   proportional beat spacing (sqrt-duration), metrical beams (4/4 beams
@@ -170,11 +169,23 @@ Git repo on `main`; commit as you go (conventional commits).
   measure through trailing rests — `totalSec` runs to the END OF THE LAST
   BAR, not to the last note. No free-running clicks of its own while the
   music is stopped.
+- **Layout**: pure `Score → geometry` with **exactly 4 measures per system
+  row** (`BARS_PER_SYSTEM`) — measure 5 wraps to a new line — and every row
+  scales to fill the page width with NO scale floor (guaranteed 100% fit).
+  The engine measures the wrapper's CONTENT box (not the padded
+  `clientWidth`) so the score never overflows the page margins (the old
+  48 px padding overflow caused a horizontal scrollbar).
 - **Notation-accurate rest filling** (Gould, "Behind Bars"): empty measures
-  take a single whole rest; other gaps decompose greedily into the longest
-  standard rests, half rests only aligned to the half bar, and compound
-  meters (x/8, x/16 with a multiple-of-3 numerator) never let a rest cross a
-  dotted-beat boundary (6/8 after a quarter → eighth + quarter + eighth).
+  take a single whole rest; each gap is filled per BEAT segment (a rest never
+  crosses a compound dotted-beat boundary) with the longest standard rests
+  that align to the segment, then adjacent equal rests merge when the merge
+  is bar-aligned (two quarters on beats 3-4 → one half rest). This is what
+  makes a measure **self-adjust when a written note's length is edited** —
+  matching MuseScore's documented rule ("decreasing duration adds rests
+  between it and the notes or rests following"): shorten an eighth to a 16th
+  and the freed 16th becomes a 16th rest, all other notes untouched
+  (lengthening also leaves the other notes untouched — stricter than
+  MuseScore, which overwrites following content — per the owner's spec).
   Unbeamed quarter/half notes have stems but NO flags (flags only exist on
   eighth values and shorter).
 - **Interaction**: `positionAt(clientX, clientY)` → `{barIndex, tick,
@@ -242,6 +253,16 @@ Git repo on `main`; commit as you go (conventional commits).
   interpolating between beat columns (piecewise-linear inverse of `xAtTick`)
   instead of snapping to derived-rest starts — auto-filled rests never block
   writing; the measure is freely writable at the current value's resolution.
+- **Rest entry + simple articulations**: `B` writes a rest of the selected
+  value (the palette + dot configure it exactly like notes; written rests
+  keep their exact value — dotted stays one glyph + augmentation dot — and
+  are editable via the palette / "Note length" menu like notes). Written
+  rests live in `Voice.rests` (`addRest` with MuseScore overwrite semantics,
+  `setRestDuration` clamps to the next event); notes carve the rests they
+  cover. `M/S/R/G/A` toggle palm-mute / staccato / let-ring / ghost /
+  accent on the caret note (`toggleNoteArticulation`) — "P.M." above the
+  staff, staccato dot and accent glyph opposite the stem, ghost frets in
+  parentheses; playback honors all of them.
 - **Play-from-selection**: the player resolves the start position into
   seconds AFTER the tempo map exists (`beginAt()` rebuilds the timeline
   first — converting earlier, with an empty tempo map, made playback start
@@ -268,7 +289,7 @@ Git repo on `main`; commit as you go (conventional commits).
   `LayoutDocument` (systems → bars → per-track `TrackBar` with `Beat[]`).
   Beat `x` is absolute SVG px; every drawing + hit-test call derives from it.
 - All engraving colors come from `engravingTheme` (theme.ts), which reads
-  `@stdbd/ui` tokens — never hardcode colors in the engraver.
+  `@sower/ui` tokens — never hardcode colors in the engraver.
 - Coordinate spaces: SVG space (layout coords) vs client coords. The engine
   translates via `staticSvg.getBoundingClientRect()`.
 - Overlays live in a separate overlay SVG layered above the static score
@@ -324,7 +345,7 @@ Git repo on `main`; commit as you go (conventional commits).
 1. **Engine lives behind adapter contracts** — `ScoreRenderer` /
    `ScorePlayer` / `ScoreInteraction` in `packages/render/src/renderer.ts`.
    The app must never import `packages/render/src/engine/*` files directly;
-   go through `@stdbd/render`'s public API (`StdbdEngine`).
+   go through `@sower/render`'s public API (`SowerEngine`).
 2. **SMuFL glyph alignment**: music glyphs are drawn at font-size = staff
    height (4 × staffSpace); text-anchor `middle` centers them. Time-sig
    digits are baseline-centered and span ±1 staff space (verified via canvas
@@ -347,8 +368,8 @@ Git repo on `main`; commit as you go (conventional commits).
    prop set). If the page errors with props/undefined mismatches right after
    editing React components, kill the node processes and restart
    `pnpm run dev` before debugging the code.
-7. **Debug hook**: `window.__stdbRenderer` exposes the StdbdEngine
-   (`positionAt`, `pointFor`, `getBarRect`) and `window.__stdbDoc` the
+7. **Debug hook**: `window.__sowerRenderer` exposes the SowerEngine
+   (`positionAt`, `pointFor`, `getBarRect`) and `window.__sowerDoc` the
    ScoreDocument — used by scripts and E2E. Measure-button clicks: the
    score's container pointerdown handler must skip `[data-stdb-action]`
    targets — otherwise the caret re-render destroys the button between
@@ -393,14 +414,17 @@ Git repo on `main`; commit as you go (conventional commits).
   slows them live; metronome silent while stopped, clicks the sheet's beat
   grid during playback AND all 4 beats of a 4/4 measure through trailing
   rests (625 ms gaps) ✓
-- Sheet editing (`probe-sheet-v2.mjs`, 21/21): instant play-from-selection,
+- Sheet editing (`probe-sheet-v2.mjs`, 28/28): instant play-from-selection,
   tempo mark → ♪. = 85 (unit 360), meter popover → 6/8 mid-system, right-click
   menu (tempo / note length / meter / insert / delete), quarter + dotted
   palette durations, "Note length" changes ONLY the clicked note (240→480)
   while the notes after it stay untouched, entry mode updates; four typed
   16ths land side by side (0/120/240/360) and beam together, and a click deep
   in the auto-rests writes exactly at the clicked 16th (measure is freely
-  writable) ✓
+  writable); shortening a written eighth to a 16th adjusts ONLY that spot
+  (eighth + 16th + 16th rest, others untouched); the sheet fits the page
+  100% (scrollWidth == clientWidth, no horizontal scroll); measure 5 wraps
+  to a new line (4 per row); B writes exact-value rests (editable like notes); M/S toggle articulations with P.M. engraved
 - Browser-verified via `scripts/interact-test.mjs` (real Edge):
   - click on TAB number → `Bar 1 · String 1 · Step 1` ✓
   - click empty A2 line → `Bar 1 · String 5 · Step 3` ✓

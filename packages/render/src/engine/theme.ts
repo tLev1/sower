@@ -1,6 +1,6 @@
-import { colors } from "@stdbd/ui";
+import { colors } from "@sower/ui";
 
-/** Engraving theme — derived from the design tokens in @stdbd/ui. */
+/** Engraving theme — derived from the design tokens in @sower/ui. */
 export const engravingTheme = {
   fontColor: colors.text, // glyphs, noteheads, tab numbers
   secondaryColor: colors.textMuted, // bar numbers, ancillary marks

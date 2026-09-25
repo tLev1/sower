@@ -43,7 +43,7 @@ await page.screenshot({ path: "C:/dev/temp/opencode/v2-sheet.png", fullPage: fal
 
 // context menu open state
 const bar2Point = await page.evaluate(() =>
-  window.__stdbRenderer.pointFor({ barIndex: 1, tick: 240, stringIndex: 1 }),
+  window.__sowerRenderer.pointFor({ barIndex: 1, tick: 240, stringIndex: 1 }),
 );
 await page.mouse.click(bar2Point.x, bar2Point.y, { button: "right" });
 await page.waitForTimeout(300);

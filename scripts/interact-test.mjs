@@ -23,7 +23,7 @@ const results = {};
 const tabPoint = (barIndex, tick, stringVisual) =>
   page.evaluate(
     ({ barIndex, tick, stringVisual }) => {
-      const r = window.__stdbRenderer;
+      const r = window.__sowerRenderer;
       const p = r.pointFor({ barIndex, tick, stringIndex: stringVisual });
       return p;
     },

@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import type { StdbdEngine } from "@stdbd/render";
-import { G } from "@stdbd/render";
-import { tempoMarkAt, TICKS_PER_QUARTER, type Score } from "@stdbd/core";
+import type { SowerEngine } from "@sower/render";
+import { G } from "@sower/render";
+import { tempoMarkAt, TICKS_PER_QUARTER, type Score } from "@sower/core";
 import { durationIsDotted, durationValueOfTicks } from "../editor/caret";
 
 interface TransportBarProps {
-  renderer: StdbdEngine | null;
+  renderer: SowerEngine | null;
   score: Score;
   caretBarIndex: number;
   canUndo: boolean;

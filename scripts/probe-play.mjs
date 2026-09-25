@@ -1,4 +1,4 @@
-﻿import { chromium } from "playwright";
+import { chromium } from "playwright";
 const browser = await chromium.launch({ channel: "msedge" });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 2 });
 await page.goto("http://localhost:5173", { waitUntil: "networkidle", timeout: 30000 });
@@ -15,7 +15,7 @@ for (let i = 0; i < 2; i++) {
   });
   await page.waitForTimeout(300);
 }
-const barCount = await page.evaluate(() => window.__stdbRenderer ? document.querySelectorAll("text.stdb-bar-number").length : -1);
+const barCount = await page.evaluate(() => window.__sowerRenderer ? document.querySelectorAll("text.stdb-bar-number").length : -1);
 console.log("after +2, bar-number labels:", barCount);
 
 // click "-" once

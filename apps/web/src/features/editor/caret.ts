@@ -1,5 +1,5 @@
-import type { Note, Score } from "@stdbd/core";
-import { TICKS_PER_QUARTER, ticksPerBar } from "@stdbd/core";
+import type { Bar, Note, Rest, Score } from "@sower/core";
+import { TICKS_PER_QUARTER, ticksPerBar } from "@sower/core";
 
 /**
  * Keyboard-first caret over the score grid.
@@ -143,6 +143,14 @@ export function noteAt(score: Score, caret: Caret): Note | null {
   const notes = bar?.voices[0]?.notes ?? [];
   for (const note of notes) {
     if (note.start === caret.tick && note.string === caret.stringIndex) return note;
+  }
+  return null;
+}
+
+/** Written rest covering a tick position in the bar (voice 0). */
+export function restCovering(bar: Bar, tick: number): Rest | null {
+  for (const rest of bar.voices[0]?.rests ?? []) {
+    if (rest.start <= tick && tick < rest.start + rest.duration) return rest;
   }
   return null;
 }

@@ -1,8 +1,8 @@
 {
-  "name": "stdbd",
+  "name": "sower",
   "version": "0.0.1",
   "private": true,
-  "description": "stdBd - a premium music score & tab creation platform",
+  "description": "Sower - a premium music score & tab creation platform",
   "packageManager": "pnpm@12.5.1",
   "engines": {
     "node": ">=22"
@@ -12,7 +12,7 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint .",
     "test": "pnpm -r test",
-    "dev": "pnpm --filter @stdbd/web dev"
+    "dev": "pnpm --filter @sower/web dev"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

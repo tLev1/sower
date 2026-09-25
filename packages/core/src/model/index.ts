@@ -1,4 +1,4 @@
-export type { Articulation, Bar, Clef, InstrumentFamily, Note, Score, Track, Tuning, Voice } from "./score";
+export type { Articulation, Bar, Clef, InstrumentFamily, Note, Rest, Score, Track, Tuning, Voice } from "./score";
 export {
   STANDARD_BASS_TUNING,
   STANDARD_GUITAR_TUNING,

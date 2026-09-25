@@ -1,5 +1,5 @@
-﻿import type { Note } from "@stdbd/core";
-import { TICKS_PER_QUARTER } from "@stdbd/core";
+import type { Note } from "@sower/core";
+import { TICKS_PER_QUARTER } from "@sower/core";
 import type { BarBox, LayoutDocument, TrackBar } from "./layout.js";
 import { durationClass, keyAlteredPcs, type DurationClass } from "./layout.js";
 import { G, MUSIC_FONT } from "./smufl.js";
@@ -368,6 +368,18 @@ function drawNotation(bar: BarBox, tb: TrackBar, S: number, parts: string[]): vo
     const group = beamGroups.get(beat.beamId) ?? null;
     const beamed = group !== null && group.length >= 2;
     drawChord(beat, S, middleY, parts, beamed, bar.fifths, accidentalState);
+    // palm mute: "P.M." above the staff at the affected beat (Gould)
+    if (beat.notes.some((n) => n.articulations.some((a) => a.kind === "palmMute"))) {
+      parts.push(
+        uiText(beat.x, tb.staffTop - S * 1.15, "P.M.", {
+          size: 9.5,
+          weight: 620,
+          fill: engravingTheme.secondaryColor,
+          anchor: "middle",
+          cls: "stdb-pm",
+        }),
+      );
+    }
   });
 
   for (const group of beamGroups.values()) {
@@ -390,6 +402,22 @@ function drawRestGlyph(
     dc === "32nd" ? G.rest32nd : G.restQuarter;
   const y = dc === "whole" ? middleY - S : middleY;
   parts.push(glyph(cp, beat.x, y, { size: S * 4, anchor: "middle", fill: engravingTheme.secondaryColor, cls: "stdb-rest" }));
+  // written dotted rests (♪. etc.) keep their exact value: draw the dot
+  if (isDottedTicks(beat.duration)) {
+    parts.push(
+      glyph(G.augmentationDot, beat.x + S * 1.15, y, {
+        size: S * 4,
+        anchor: "middle",
+        fill: engravingTheme.secondaryColor,
+        cls: "stdb-rest-dot",
+      }),
+    );
+  }
+}
+
+/** True for dotted tick lengths (1.5× a standard value: 360 = dotted eighth). */
+function isDottedTicks(ticks: number): boolean {
+  return [1920, 960, 480, 240, 120, 60].some((v) => v * 1.5 === ticks);
 }
 
 type AccidentalKind = "sharp" | "flat" | "natural";
@@ -494,6 +522,14 @@ function drawChord(
       accidentalState.set(pos, desired);
     }
     parts.push(glyph(headCp, beat.x + dx, y, { size: S * 4, anchor: "middle", cls: "stdb-notehead" }));
+    // articulation marks sit on the side opposite the stem (Gould)
+    const markY = stemUp ? y + S * 1.25 : y - S * 1.25;
+    if (note.articulations.some((a) => a.kind === "staccato")) {
+      parts.push(glyph(G.articStaccatoAbove, beat.x + dx, markY, { size: S * 2.1, anchor: "middle", cls: "stdb-artic" }));
+    }
+    if (note.articulations.some((a) => a.kind === "accent")) {
+      parts.push(glyph(G.articAccentAbove, beat.x + dx, markY, { size: S * 2.1, anchor: "middle", cls: "stdb-artic" }));
+    }
     if (beamed || dc === "whole") return; // stems/beams come from drawBeam
     const stemX = beat.x + dx + (stemUp ? S * STEM_ATTACH : -S * STEM_ATTACH);
     const tipY = stemUp ? y - STEM_LEN * S : y + STEM_LEN * S;

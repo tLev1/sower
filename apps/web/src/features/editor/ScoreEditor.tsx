@@ -3,14 +3,14 @@ import { openStringPitch, type Caret } from "./caret";
 import { DurationPicker } from "./DurationPicker";
 import { SheetMenu, type SheetMenuState } from "./SheetMenu";
 import type { useEditor } from "./useEditor";
-import type { StdbdEngine } from "@stdbd/render";
-import type { Score } from "@stdbd/core";
+import type { SowerEngine } from "@sower/render";
+import type { Score } from "@sower/core";
 
 interface ScoreEditorProps {
   score: Score;
   caret: Caret;
   editor: ReturnType<typeof useEditor>;
-  renderer: StdbdEngine | null;
+  renderer: SowerEngine | null;
 }
 
 /**
@@ -101,7 +101,7 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
           onSelect={editor.setEntryDuration}
         />
         <span className="hint">
-          Click a beat · 0-9 frets · value palette sets note length · Right-click/long-press for
+          Click a beat · B writes rests · 0-9 frets · value palette sets note length · Right-click/long-press for
           tempo, meter & measures · Ctrl+Z undo · Space play
         </span>
         <span className="strings">

@@ -39,6 +39,20 @@ export type NoteId = number & { readonly [brand]: "NoteId" };
 
 export interface Voice {
   readonly notes: readonly Note[];
+  /**
+   * User-written rests with exact values (the measure auto-fills the gaps
+   * around them). Optional — legacy scores simply have none.
+   */
+  readonly rests?: readonly Rest[];
+}
+
+/** A written rest: silence of an exact notated length at a position. */
+export interface Rest {
+  /** Shares the NoteId sequence (voice items are one id space). */
+  readonly id: NoteId;
+  /** Start position within the bar, in ticks. */
+  readonly start: number;
+  readonly duration: number;
 }
 
 export interface Note {

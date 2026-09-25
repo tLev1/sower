@@ -1,8 +1,8 @@
-# stdBd — Architecture
+# Sower — Architecture
 
 ## Principles
 
-1. **Pure domain core.** `@stdbd/core` has zero dependencies — no React, no DOM, no audio, no I/O. Think "platform-independent layer" (embedded analogy: your HAL-free business logic).
+1. **Pure domain core.** `@sower/core` has zero dependencies — no React, no DOM, no audio, no I/O. Think "platform-independent layer" (embedded analogy: your HAL-free business logic).
 2. **Ports & adapters.** Rendering, audio, AI are interfaces in adapter packages (`ScoreRenderer`, `SynthEngine`, `TranscriptionEngine`). Swapping alphaTab for another renderer, or soundfonts for premium samples, touches one adapter only.
 3. **Event-sourced editing.** Every edit is a pure `Command` producing a new immutable `Score`. Undo/redo, version branching, diffs, and live-transcription review come free from this.
 4. **Feature slices.** Features (editor, livesession, arranger) never import each other — only core + adapter interfaces. Enforced in CI.

@@ -1,5 +1,5 @@
 {
-  "name": "@stdbd/audio",
+  "name": "@sower/audio",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "@stdbd/core": "workspace:*"
+    "@sower/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.9.0"

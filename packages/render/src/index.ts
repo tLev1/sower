@@ -7,7 +7,7 @@ export type {
   ScoreRenderer,
   SheetMarkerClick,
 } from "./renderer.js";
-export { StdbdEngine, type CaretPosition, type Rect } from "./engine/engine.js";
+export { SowerEngine, type CaretPosition, type Rect } from "./engine/engine.js";
 export { WebAudioPlayer, type PlaybackPosition } from "./engine/player.js";
 export {
   computeLayout,

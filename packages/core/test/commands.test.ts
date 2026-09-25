@@ -194,6 +194,76 @@ describe("applyCommand", () => {
     ).toThrow();
   });
 
+  it("addRest writes a rest of an exact value and overwrites what it covers", () => {
+    const score = makeScore();
+    // the fixture note sits at 0..480 — a rest at 0..240 replaces it and trims nothing else
+    const next = applyCommand(score, {
+      type: "addRest",
+      trackId: 1 as never,
+      barId: 1 as never,
+      rest: { start: 0, duration: 240 },
+    }, ctx);
+    const voice = next.bars[0]!.voices[0]!;
+    expect(voice.notes).toHaveLength(0); // note started inside the rest → replaced
+    expect(voice.rests).toHaveLength(1);
+    expect(voice.rests![0]).toMatchObject({ start: 0, duration: 240 });
+  });
+
+  it("addRest trims an overlapping note at its edge", () => {
+    const score = makeScore();
+    const withNote = applyCommand(score, {
+      type: "addNote",
+      trackId: 1 as never,
+      barId: 1 as never,
+      note: { pitch: 62, start: 960, duration: 480, string: 1, fret: 2 },
+    }, createIdAllocator());
+    const next = applyCommand(withNote, {
+      type: "addRest",
+      trackId: 1 as never,
+      barId: 1 as never,
+      rest: { start: 1200, duration: 240 },
+    }, ctx);
+    const notes = next.bars[0]!.voices[0]!.notes;
+    const trimmed = notes.find((n) => n.start === 960);
+    expect(trimmed?.duration).toBe(240); // ends where the rest begins
+    expect(next.bars[0]!.voices[0]!.rests).toHaveLength(1);
+  });
+
+  it("setRestDuration clamps to the next written event", () => {
+    const score = makeScore();
+    const withRest = applyCommand(score, {
+      type: "addRest",
+      trackId: 1 as never,
+      barId: 1 as never,
+      rest: { start: 960, duration: 240 },
+    }, ctx);
+    const restId = withRest.bars[0]!.voices[0]!.rests![0]!.id;
+    const next = applyCommand(withRest, {
+      type: "setRestDuration",
+      trackId: 1 as never,
+      barId: 1 as never,
+      restId,
+      duration: 1920,
+    }, ctx);
+    // the fixture note starts at 0 and the bar is 1920 long → clamp to the bar
+    expect(next.bars[0]!.voices[0]!.rests![0]!.duration).toBe(960);
+  });
+
+  it("toggleNoteArticulation adds and removes simple articulations", () => {
+    const score = makeScore();
+    const cmd = {
+      type: "toggleNoteArticulation",
+      trackId: 1 as never,
+      barId: 1 as never,
+      noteId: 100 as never,
+      articulation: "palmMute",
+    } as const;
+    const on = applyCommand(score, cmd, ctx);
+    expect(on.bars[0]!.voices[0]!.notes[0]!.articulations).toContainEqual({ kind: "palmMute" });
+    const off = applyCommand(on, cmd, ctx);
+    expect(off.bars[0]!.voices[0]!.notes[0]!.articulations).toHaveLength(0);
+  });
+
   it("setTimeSignature applies from the target bar onward", () => {
     const score = makeScore();
     const withSecond = applyCommand(score, { type: "addBar", afterBarId: null }, ctx);

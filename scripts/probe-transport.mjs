@@ -1,4 +1,4 @@
-﻿import { chromium } from "playwright";
+import { chromium } from "playwright";
 const browser = await chromium.launch({ channel: "msedge" });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 2 });
 page.on("pageerror", (e) => console.log("PAGE ERROR:\n" + (e.stack ?? e.message)));
@@ -7,7 +7,7 @@ await page.waitForTimeout(3000);
 
 // caret back to bar 1 (primary tempo marker) — edit BPM to 140
 await page.evaluate(() => {
-  const r = window.__stdbRenderer.pointFor({ barIndex: 0, tick: 0, stringIndex: 0 });
+  const r = window.__sowerRenderer.pointFor({ barIndex: 0, tick: 0, stringIndex: 0 });
   const ev = new PointerEvent("pointerdown", { clientX: r.x, clientY: r.y, bubbles: true });
   document.querySelector(".score-scroll").dispatchEvent(ev);
 });

@@ -1,5 +1,5 @@
 {
-  "name": "@stdbd/render",
+  "name": "@sower/render",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -13,8 +13,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@stdbd/core": "workspace:*",
-    "@stdbd/ui": "workspace:*"
+    "@sower/core": "workspace:*",
+    "@sower/ui": "workspace:*"
   },
   "devDependencies": {
     "typescript": "~5.9.0",

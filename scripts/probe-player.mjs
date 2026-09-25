@@ -65,24 +65,24 @@ await page.evaluate(() => {
 });
 
 // warm-up (absorbs the one-time headless resume latency)
-await page.evaluate(() => window.__stdbRenderer.play());
+await page.evaluate(() => window.__sowerRenderer.play());
 await page.waitForTimeout(900);
-await page.evaluate(() => window.__stdbRenderer.stop());
+await page.evaluate(() => window.__sowerRenderer.stop());
 await page.waitForTimeout(400);
 
 // ---- 1 + 2 + 3. play from bar 2 (~5s into the score at 96 bpm) ---------------
 const caret = await page.evaluate(() =>
-  window.__stdbRenderer.pointFor({ barIndex: 1, tick: 0, stringIndex: 2 }),
+  window.__sowerRenderer.pointFor({ barIndex: 1, tick: 0, stringIndex: 2 }),
 );
 await page.mouse.click(caret.x, caret.y);
 await page.waitForTimeout(150);
 const run1 = await page.evaluate(() => {
   window.__srcLog.length = 0;
-  window.__stdbRenderer.play();
+  window.__sowerRenderer.play();
   return new Promise((resolve) => {
     setTimeout(() => {
       resolve(window.__stats());
-      window.__stdbRenderer.stop();
+      window.__sowerRenderer.stop();
     }, 1600);
   });
 });
@@ -124,11 +124,11 @@ await page.keyboard.press("Enter");
 await page.waitForTimeout(300);
 const run2 = await page.evaluate(() => {
   window.__srcLog.length = 0;
-  window.__stdbRenderer.play();
+  window.__sowerRenderer.play();
   return new Promise((resolve) => {
     setTimeout(() => {
       resolve(window.__stats());
-      window.__stdbRenderer.stop();
+      window.__sowerRenderer.stop();
     }, 1400);
   });
 });
@@ -142,15 +142,15 @@ await page.waitForTimeout(400);
 // ---- 3c. tempo edit applies LIVE during playback -----------------------------
 const run3 = await page.evaluate(() => {
   window.__srcLog.length = 0;
-  window.__stdbRenderer.play(); // still 192 bpm
+  window.__sowerRenderer.play(); // still 192 bpm
   return new Promise((resolve) => {
     setTimeout(() => {
-      const bar = window.__stdbDoc.score.bars[1];
-      window.__stdbDoc.execute({ type: "setBarTempo", barId: bar.id, tempo: 96, unitTicks: 480 });
+      const bar = window.__sowerDoc.score.bars[1];
+      window.__sowerDoc.execute({ type: "setBarTempo", barId: bar.id, tempo: 96, unitTicks: 480 });
     }, 400);
     setTimeout(() => {
       resolve(window.__stats());
-      window.__stdbRenderer.stop();
+      window.__sowerRenderer.stop();
     }, 1900);
   });
 });
@@ -185,11 +185,11 @@ check(
 const grid = await page.evaluate(() => {
   window.__srcLog.length = 0;
   document.querySelector(".metronome-btn").click(); // ON
-  window.__stdbRenderer.play();
+  window.__sowerRenderer.play();
   return new Promise((resolve) => {
     setTimeout(() => {
       resolve(window.__stats());
-      window.__stdbRenderer.stop();
+      window.__sowerRenderer.stop();
       document.querySelector(".metronome-btn").click(); // OFF
     }, 1700);
   });
@@ -212,7 +212,7 @@ await page.waitForTimeout(400);
 await page.click('.duration-picker .duration-btn[title="Quarter note"]');
 await page.waitForTimeout(150);
 const emptyBar = await page.evaluate(() =>
-  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 2 }),
+  window.__sowerRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 2 }),
 );
 await page.mouse.click(emptyBar.x, emptyBar.y);
 await page.waitForTimeout(150);
@@ -223,11 +223,11 @@ await page.waitForTimeout(200);
 const restBar = await page.evaluate(() => {
   window.__srcLog.length = 0;
   document.querySelector(".metronome-btn").click(); // ON
-  window.__stdbRenderer.play();
+  window.__sowerRenderer.play();
   return new Promise((resolve) => {
     setTimeout(() => {
       resolve(window.__stats());
-      window.__stdbRenderer.stop();
+      window.__sowerRenderer.stop();
       document.querySelector(".metronome-btn").click(); // OFF
     }, 2800);
   });

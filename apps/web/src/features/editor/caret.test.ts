@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Score } from "@stdbd/core";
-import { TICKS_PER_QUARTER } from "@stdbd/core";
+import type { Score } from "@sower/core";
+import { TICKS_PER_QUARTER } from "@sower/core";
 import {
   GRID_TICKS,
   capacityOf,

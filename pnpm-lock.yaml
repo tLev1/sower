@@ -190,16 +190,16 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.3.0
         version: 5.3.0
-      '@stdbd/audio':
+      '@sower/audio':
         specifier: workspace:*
         version: link:../../packages/audio
-      '@stdbd/core':
+      '@sower/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@stdbd/render':
+      '@sower/render':
         specifier: workspace:*
         version: link:../../packages/render
-      '@stdbd/ui':
+      '@sower/ui':
         specifier: workspace:*
         version: link:../../packages/ui
     devDependencies:
@@ -230,7 +230,7 @@ importers:
 
   packages/audio:
     dependencies:
-      '@stdbd/core':
+      '@sower/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -249,10 +249,10 @@ importers:
 
   packages/render:
     dependencies:
-      '@stdbd/core':
+      '@sower/core':
         specifier: workspace:*
         version: link:../core
-      '@stdbd/ui':
+      '@sower/ui':
         specifier: workspace:*
         version: link:../ui
     devDependencies:

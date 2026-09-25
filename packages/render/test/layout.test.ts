@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Note, Score } from "@stdbd/core";
-import { STANDARD_GUITAR_TUNING, TICKS_PER_QUARTER } from "@stdbd/core";
+import type { Note, Score } from "@sower/core";
+import { STANDARD_GUITAR_TUNING, TICKS_PER_QUARTER } from "@sower/core";
 import {
   beamGroupSize,
   caretAnchor,
@@ -61,7 +61,7 @@ function buildScore(): Score {
   }));
   return {
     title: "Layout Test",
-    artist: "stdBd",
+    artist: "Sower",
     tracks: [
       {
         id: 1 as never,
@@ -133,6 +133,38 @@ describe("groupIntoBeats", () => {
     expect(rests.map((r) => r.duration)).toEqual([240, 480, 240]);
   });
 
+  it("keeps written rests at their exact value (dotted stays one glyph)", () => {
+    const score = buildScore();
+    const bar = score.bars[0];
+    if (!bar) return;
+    const rest = { id: 800 as never, start: 0, duration: 360 }; // dotted eighth
+    const note: Note = { id: 801 as never, pitch: 64, string: 0, fret: 0, start: 360, duration: 120, velocity: 100, articulations: [] };
+    const seeds = groupIntoBeats([note], bar, [rest]);
+    expect(seeds.find((s) => s.start === 0)).toMatchObject({ duration: 360, isRest: true });
+    expect(seeds.find((s) => s.start === 360)).toMatchObject({ duration: 120, isRest: false });
+    // auto-fill only fills what the written items leave open
+    expect(seeds.filter((s) => s.isRest && s.start < 360)).toHaveLength(1);
+  });
+
+  it("adjusts the measure with rests when a written note is shortened", () => {
+    const score = buildScore();
+    const bar = score.bars[0];
+    if (!bar) return;
+    const eighth = TICKS_PER_QUARTER / 2;
+    // beat 2 held two eighths; the second was shortened to a 16th →
+    // eighth + 16th + 16th rest on beat 2, the other notes untouched
+    const a: Note = { id: 700 as never, pitch: 64, string: 0, fret: 0, start: 480, duration: eighth, velocity: 100, articulations: [] };
+    const b: Note = { id: 701 as never, pitch: 67, string: 0, fret: 3, start: 720, duration: 120, velocity: 100, articulations: [] };
+    const c: Note = { id: 702 as never, pitch: 64, string: 0, fret: 0, start: 960, duration: eighth, velocity: 100, articulations: [] };
+    const seeds = groupIntoBeats([a, b, c], bar);
+    expect(seeds.find((s) => s.start === 480)).toMatchObject({ duration: eighth, isRest: false });
+    expect(seeds.find((s) => s.start === 720)).toMatchObject({ duration: 120, isRest: false });
+    expect(seeds.find((s) => s.start === 840)).toMatchObject({ duration: 120, isRest: true });
+    expect(seeds.find((s) => s.start === 960)).toMatchObject({ duration: eighth, isRest: false });
+    // no other written note changed / no misaligned rests
+    expect(seeds.filter((s) => !s.isRest).map((s) => s.start)).toEqual([480, 720, 960]);
+  });
+
   function quarterNote(): Note {
     return {
       id: 501 as never,
@@ -194,6 +226,27 @@ describe("computeLayout", () => {
       const prev = system.bars[i - 1];
       const curr = system.bars[i];
       if (prev && curr) expect(curr.x0).toBe(prev.x1);
+    }
+  });
+
+  it("lays out exactly 4 measures per line (measure 5 wraps)", () => {
+    const base = buildScore();
+    const first = base.bars[0];
+    if (!first) return;
+    const bars = Array.from({ length: 5 }, (_, i) => ({
+      ...first,
+      id: (100 + i) as never,
+      voices: [{ notes: [] }],
+    }));
+    const layout = computeLayout({ ...base, bars }, { width: 1600 });
+    expect(layout.systems).toHaveLength(2);
+    expect(layout.systems[0]?.bars).toHaveLength(4);
+    expect(layout.systems[1]?.bars).toHaveLength(1);
+    // every system fits the page width exactly
+    for (const system of layout.systems) {
+      for (const bar of system.bars) {
+        expect(bar.x1).toBeLessThanOrEqual(layout.width);
+      }
     }
   });
 

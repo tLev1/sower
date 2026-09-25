@@ -1,4 +1,4 @@
-# stdBd
+# Sower
 
 Premium music score & tab creation platform. Tabs + notation for guitar, bass,
 piano, drums — with AI transcription (audio→score, live input) and a live

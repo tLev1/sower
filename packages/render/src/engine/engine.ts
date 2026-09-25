@@ -1,4 +1,4 @@
-import type { Score } from "@stdbd/core";
+import type { Score } from "@sower/core";
 import type {
   ClickedPosition,
   ContextMenuRequest,
@@ -21,7 +21,7 @@ import { WebAudioPlayer } from "./player.js";
 import { engravingTheme } from "./theme.js";
 
 /**
- * The stdBd engraving engine — a from-scratch SVG score renderer.
+ * The Sower engraving engine — a from-scratch SVG score renderer.
  *
  * Implements the adapter contracts (ScoreRenderer + ScorePlayer +
  * ScoreInteraction): mounts into a container, lays out and engraves the
@@ -44,7 +44,7 @@ export interface CaretPosition {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction {
+export class SowerEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction {
   private readonly container: HTMLElement;
   private wrapper: HTMLDivElement | null = null;
   private staticSvg: SVGSVGElement | null = null;
@@ -113,7 +113,7 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     });
 
     // debug/test hook — used by scripts and E2E
-    (window as unknown as Record<string, unknown>).__stdbRenderer = this;
+    (window as unknown as Record<string, unknown>).__sowerRenderer = this;
   }
 
   loadScore(score: Score): void {
@@ -149,7 +149,7 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     this.removeBarListeners.clear();
     this.sheetMarkerListeners.clear();
     this.contextMenuListeners.clear();
-    delete (window as unknown as Record<string, unknown>).__stdbRenderer;
+    delete (window as unknown as Record<string, unknown>).__sowerRenderer;
   }
 
   // -- hit-testing / interaction ------------------------------------------------
@@ -305,7 +305,10 @@ export class StdbdEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
   private relayout(): void {
     const score = this.score;
     if (!score || !this.wrapper) return;
-    const width = this.container.clientWidth || 960;
+    // measure the CONTENT box (the wrapper sits inside the scroll container's
+    // padding) — using the padded clientWidth made the score overflow the
+    // page margins and produce a horizontal scrollbar
+    const width = this.wrapper.clientWidth || this.container.clientWidth || 960;
     const layout = computeLayout(score, { width });
     this.layout = layout;
     this.renderStatic();

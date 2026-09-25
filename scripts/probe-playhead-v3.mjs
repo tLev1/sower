@@ -24,7 +24,7 @@ await page.waitForTimeout(400);
 await page.click('.duration-picker .duration-btn[title="Quarter note"]');
 await page.waitForTimeout(150);
 const emptyPoint = await page.evaluate(() =>
-  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 2 }),
+  window.__sowerRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 2 }),
 );
 await page.mouse.click(emptyPoint.x, emptyPoint.y);
 await page.waitForTimeout(150);
@@ -33,18 +33,18 @@ await page.waitForTimeout(250);
 
 // caret back ON the quarter (tick 0): click its column (grid-independent)
 const qPoint = await page.evaluate(() =>
-  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 2 }),
+  window.__sowerRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 2 }),
 );
 await page.mouse.click(qPoint.x, qPoint.y);
 await page.waitForTimeout(150);
 // warm-up play (absorbs one-time headless resume latency)
-await page.evaluate(() => window.__stdbRenderer.play());
+await page.evaluate(() => window.__sowerRenderer.play());
 await page.waitForTimeout(1200);
-await page.evaluate(() => window.__stdbRenderer.stop());
+await page.evaluate(() => window.__sowerRenderer.stop());
 await page.waitForTimeout(500);
 
 const run = await page.evaluate(() => {
-  const r = window.__stdbRenderer;
+  const r = window.__sowerRenderer;
   const t0 = performance.now();
   const samples = [];
   const off = r.onPositionChanged((pos) => {
@@ -70,32 +70,32 @@ check(
   monotonic && ticks.length > 20 && ticks[ticks.length - 1] - ticks[0] > 700,
   `samples=${ticks.length} last tick=${ticks[ticks.length - 1]}`,
 );
-await page.evaluate(() => window.__stdbRenderer.stop());
+await page.evaluate(() => window.__sowerRenderer.stop());
 await page.waitForTimeout(500);
 
 // ---- B. carry-over: caret INSIDE the sounding quarter (tick 240) --------------
 // park the caret on an empty string first so the palette click only sets the
 // mode, then step the grid to eighths and land inside the quarter
 const emptyStr = await page.evaluate(() =>
-  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 5 }),
+  window.__sowerRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 5 }),
 );
 await page.mouse.click(emptyStr.x, emptyStr.y);
 await page.waitForTimeout(120);
 await page.click('.duration-picker .duration-btn[title="Eighth note"]');
 await page.waitForTimeout(150);
 const midPoint = await page.evaluate(() =>
-  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 240, stringIndex: 2 }),
+  window.__sowerRenderer.pointFor({ barIndex: 2, tick: 240, stringIndex: 2 }),
 );
 await page.mouse.click(midPoint.x, midPoint.y);
 await page.waitForTimeout(150);
 const beforeRun = await page.evaluate(() => {
-  const n = window.__stdbDoc.score.bars[2].voices[0].notes[0];
+  const n = window.__sowerDoc.score.bars[2].voices[0].notes[0];
   return { duration: n?.duration ?? 0 };
 });
 if (beforeRun.duration !== 480) {
   // safety: restore the quarter if a palette click mutated it
   await page.evaluate(() => {
-    const doc = window.__stdbDoc;
+    const doc = window.__sowerDoc;
     const track = doc.score.tracks[0];
     const bar = doc.score.bars[2];
     const n = bar.voices[0].notes[0];
@@ -115,7 +115,7 @@ const carryRun = await page.evaluate(() => {
     }
     return origStart.apply(this, args);
   };
-  window.__stdbRenderer.play();
+  window.__sowerRenderer.play();
   return new Promise((resolve) => {
     setTimeout(() => {
       AudioBufferSourceNode.prototype.start = origStart;
@@ -128,7 +128,7 @@ check(
   carryRun.fired !== null && carryRun.fired < 120,
   `first source at ${carryRun.fired?.toFixed(1) ?? "never"}ms (Δ ${carryRun.delta?.toFixed(1) ?? "?"}ms)`,
 );
-await page.evaluate(() => window.__stdbRenderer.stop());
+await page.evaluate(() => window.__sowerRenderer.stop());
 await page.waitForTimeout(400);
 
 // ---- C. rest fill (4/4 bar with a quarter at beat 1) --------------------------
@@ -146,7 +146,7 @@ check(
 
 // ---- D. mid-system time signature change engraved (6/8 on bar 3) --------------
 const bar3Point = await page.evaluate(() =>
-  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 0 }),
+  window.__sowerRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 0 }),
 );
 await page.mouse.click(bar3Point.x, bar3Point.y, { button: "right" });
 await page.waitForTimeout(250);

@@ -20,7 +20,7 @@ const counts = () =>
 
 const before = await counts();
 await page.evaluate(() => {
-  const doc = window.__stdbDoc;
+  const doc = window.__sowerDoc;
   const track = doc.score.tracks[0];
   doc.execute({ type: "addBar", afterBarId: null });
   const bar = doc.score.bars[doc.score.bars.length - 1];

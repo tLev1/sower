@@ -1,5 +1,5 @@
-import type { Bar, Note, Score, Track } from "@stdbd/core";
-import { TICKS_PER_QUARTER, ticksPerBar } from "@stdbd/core";
+import type { Bar, Note, Rest, Score, Track } from "@sower/core";
+import { TICKS_PER_QUARTER, ticksPerBar } from "@sower/core";
 
 /**
  * Pure layout engine: turns a core Score into geometry (systems, bars, beats,
@@ -9,6 +9,8 @@ import { TICKS_PER_QUARTER, ticksPerBar } from "@stdbd/core";
 
 /** One staff space in CSS pixels at scale 1 (controls overall density). */
 export const STAFF_SPACE = 10;
+/** Measures per system row — the 5th measure wraps to a new line. */
+export const BARS_PER_SYSTEM = 4;
 /** Vertical distance between two tablature string lines, in CSS pixels. */
 export const TAB_LINE_GAP = 9;
 
@@ -157,6 +159,13 @@ interface BeatSeed {
  */
 const REST_TICKS: readonly number[] = [1920, 960, 480, 240, 120, 60];
 
+/** Beat length of a meter: the denominator note, or the dotted beat in compound x/8/x/16. */
+function meterBeatTicks(ts: { readonly numerator: number; readonly denominator: number }): number {
+  const unit = (TICKS_PER_QUARTER * 4) / ts.denominator;
+  if ((ts.denominator === 8 || ts.denominator === 16) && ts.numerator % 3 === 0) return unit * 3;
+  return unit;
+}
+
 /**
  * Fills a gap with rests per standard notation practice (cf. Gould,
  * "Behind Bars"):
@@ -177,34 +186,57 @@ export function restFillSeeds(
   if (start <= 0 && end - start >= capacity) {
     return [{ start: 0, duration: capacity, notes: [], isRest: true }];
   }
-  const compoundBeat =
-    timeSignature.denominator === 8 && timeSignature.numerator % 3 === 0
-      ? TICKS_PER_QUARTER * 1.5
-      : timeSignature.denominator === 16 && timeSignature.numerator % 3 === 0
-        ? TICKS_PER_QUARTER * 0.75
-        : 0; // 0 = simple meter: single greedy pass over the whole gap
-  const seeds: BeatSeed[] = [];
-  let cursor = Math.max(0, start);
-  while (cursor < end) {
-    const segEnd = compoundBeat > 0
-      ? Math.min(end, (Math.floor(cursor / compoundBeat) + 1) * compoundBeat)
-      : end;
-    let rem = segEnd - cursor;
-    while (rem > 0) {
-      let value = REST_TICKS.find(
-        (t) => t <= rem && t <= (compoundBeat || Infinity) && (t !== 960 || cursor % 960 === 0),
-      ) ?? rem;
-      if (value > rem) value = rem;
-      seeds.push({ start: cursor, duration: value, notes: [], isRest: true });
-      cursor += value;
-      rem -= value;
+  const beatTicks = meterBeatTicks(timeSignature);
+  const compound = beatTicks > (TICKS_PER_QUARTER * 4) / timeSignature.denominator;
+
+  // phase 1: fill each beat segment of the gap independently — a rest never
+  // crosses a compound dotted-beat boundary, and each fill aligns to its
+  // segment (this is what makes a measure self-adjust when a written note's
+  // length changes: the freed time becomes properly aligned rests)
+  const fills: BeatSeed[] = [];
+  for (let bs = 0; bs < capacity; bs += beatTicks) {
+    const segStart = Math.max(start, bs);
+    const segEnd = Math.min(end, bs + beatTicks);
+    if (segStart >= segEnd) continue;
+    let p = segStart;
+    while (p < segEnd) {
+      const rem = segEnd - p;
+      const value =
+        REST_TICKS.find((t) => t <= rem && t <= beatTicks && (p - bs) % t === 0) ?? rem;
+      fills.push({ start: p, duration: value, notes: [], isRest: true });
+      p += value;
     }
   }
-  return seeds;
+
+  // phase 2: merge adjacent equal rests when the larger value is bar-aligned
+  // (two quarters on beats 3-4 of 4/4 become one half rest)
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let i = 0; i < fills.length - 1; i++) {
+      const a = fills[i];
+      const b = fills[i + 1];
+      if (!a || !b || a.duration !== b.duration) continue;
+      const value = a.duration * 2;
+      if (value > 1920 || a.start % value !== 0) continue;
+      if (compound && Math.floor(a.start / beatTicks) !== Math.floor((a.start + value - 1) / beatTicks)) {
+        continue;
+      }
+      fills.splice(i, 2, { start: a.start, duration: value, notes: [], isRest: true });
+      changed = true;
+      break;
+    }
+  }
+  return fills;
 }
 
-/** Groups notes into rhythmic columns, inserting rests to fill the bar. */
-export function groupIntoBeats(notes: readonly Note[], bar: Bar): BeatSeed[] {
+/** Groups notes into rhythmic columns, inserting rests to fill the bar.
+ * Written rests (exact values) occupy their span as one seed — the auto-fill
+ * only fills the remaining gaps around them. */
+export function groupIntoBeats(
+  notes: readonly Note[],
+  bar: Bar,
+  rests: readonly Rest[] = [],
+): BeatSeed[] {
   const byStart = new Map<number, Note[]>();
   for (const note of notes) {
     const list = byStart.get(note.start);
@@ -212,22 +244,44 @@ export function groupIntoBeats(notes: readonly Note[], bar: Bar): BeatSeed[] {
     else byStart.set(note.start, [note]);
   }
   const capacity = ticksPerBar(bar.timeSignature);
-  const seeds: BeatSeed[] = [];
-  let cursor = 0;
+  interface Item {
+    readonly start: number;
+    readonly duration: number;
+    readonly notes: Note[] | null;
+  }
+  const items: Item[] = [];
   for (const start of [...byStart.keys()].sort((a, b) => a - b)) {
     const group = byStart.get(start);
-    if (!group || start >= capacity) break;
-    if (start > cursor) {
-      seeds.push(...restFillSeeds(cursor, start, capacity, bar.timeSignature));
-    }
-    const duration = Math.min(...group.map((n) => n.duration));
-    seeds.push({
+    if (!group || start >= capacity) continue;
+    items.push({
       start,
-      duration,
+      duration: Math.min(...group.map((n) => n.duration)),
       notes: [...group].sort((a, b) => (a.string ?? 0) - (b.string ?? 0)),
-      isRest: false,
     });
-    cursor = Math.max(cursor, start + duration);
+  }
+  for (const rest of rests) {
+    if (rest.start >= capacity || rest.duration <= 0) continue;
+    items.push({
+      start: rest.start,
+      duration: Math.min(rest.duration, capacity - rest.start),
+      notes: null,
+    });
+  }
+  items.sort((a, b) => a.start - b.start || (a.notes === null ? 1 : -1));
+  const seeds: BeatSeed[] = [];
+  let cursor = 0;
+  for (const item of items) {
+    if (item.start > cursor) {
+      seeds.push(...restFillSeeds(cursor, item.start, capacity, bar.timeSignature));
+    }
+    if (item.notes) {
+      seeds.push({ start: item.start, duration: item.duration, notes: item.notes, isRest: false });
+    } else {
+      // a written rest keeps its exact value (dotted included) — one glyph,
+      // never decomposed by the auto-fill
+      seeds.push({ start: item.start, duration: item.duration, notes: [], isRest: true });
+    }
+    cursor = Math.max(cursor, item.start + item.duration);
   }
   if (cursor < capacity) {
     seeds.push(...restFillSeeds(cursor, capacity, capacity, bar.timeSignature));
@@ -549,7 +603,8 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
   const seedsPerBar = score.bars.map((bar) =>
     tracks.map(() => {
       const notes = bar.voices[0]?.notes ?? [];
-      const seeds = groupIntoBeats(notes, bar);
+      const rests = bar.voices[0]?.rests ?? [];
+      const seeds = groupIntoBeats(notes, bar, rests);
       return seeds.map((seed) => ({ seed, width: beatWidth(seed.duration, staffSpace) }));
     }),
   );
@@ -587,32 +642,12 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     return staffSpace * (1.1 + 2.0 * digits + 0.9);
   };
 
-  // --- Pass 1: wrap bars into systems (greedy; measures are contiguous). ---
+  // --- Pass 1: fixed 4 measures per system (measure 5 starts a new line). ---
   const groups: number[][] = [];
-  {
-    let group: number[] = [];
-    let acc = 0;
-    for (let i = 0; i < score.bars.length; i++) {
-      const isFirst = group.length === 0;
-      const lead = isFirst
-        ? systemLeadWidth(hasNotation, hasTab, fifthsPerBar[i] ?? 0, showTimeAt(i), staffSpace)
-        : showTimeAt(i)
-          ? timeChangeLead(i)
-          : 0;
-      const need = Math.max(baseWidths[i] ?? 0, minBarWidth) + lead;
-      if (!isFirst && acc + need > contentWidth) {
-        groups.push(group);
-        group = [];
-        acc = 0;
-        const wrappedLead = systemLeadWidth(hasNotation, hasTab, fifthsPerBar[i] ?? 0, showTimeAt(i), staffSpace);
-        group.push(i);
-        acc += Math.max(baseWidths[i] ?? 0, minBarWidth) + wrappedLead;
-      } else {
-        group.push(i);
-        acc += need;
-      }
-    }
-    if (group.length > 0) groups.push(group);
+  for (let i = 0; i < score.bars.length; i += BARS_PER_SYSTEM) {
+    const group: number[] = [];
+    for (let k = i; k < Math.min(i + BARS_PER_SYSTEM, score.bars.length); k++) group.push(k);
+    groups.push(group);
   }
 
   // --- Pass 2: geometry per system. ---
@@ -655,7 +690,8 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     // the last system leaves room after the final barline for the +/− controls
     const tailReserve = s === groups.length - 1 ? staffSpace * 6.6 : 0;
     const available = contentWidth - lead - tailReserve;
-    const scale = totalContent > 0 ? Math.max(available / totalContent, 0.55) : 1;
+    // no scale floor: every system fits the page width exactly (100% fit)
+    const scale = totalContent > 0 ? Math.max(available / totalContent, 0) : 1;
     const stretched = widths.map((w) => w * scale);
 
     let xCursor = padding;

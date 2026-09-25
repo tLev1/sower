@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ScoreDocument } from "@stdbd/core";
-import { StdbdEngine } from "@stdbd/render";
+import { ScoreDocument } from "@sower/core";
+import { SowerEngine } from "@sower/render";
 import { ScoreEditor } from "./features/editor/ScoreEditor";
 import { useEditor } from "./features/editor/useEditor";
 import { TransportBar } from "./features/playback/TransportBar";
@@ -9,8 +9,8 @@ import { attachAutosave, loadActiveScore } from "./services/score-store";
 
 export function App() {
   const [doc] = useState(() => new ScoreDocument({ initialScore: demoScore }));
-  const [renderer, setRenderer] = useState<StdbdEngine | null>(null);
-  const rendererRef = useRef<StdbdEngine | null>(null);
+  const [renderer, setRenderer] = useState<SowerEngine | null>(null);
+  const rendererRef = useRef<SowerEngine | null>(null);
   const editor = useEditor({ document: doc, renderer });
 
   const { container } = editor;
@@ -18,7 +18,7 @@ export function App() {
   // mount the engine once the editor container exists (StrictMode-safe)
   useEffect(() => {
     if (!container || rendererRef.current) return;
-    const instance = new StdbdEngine(container);
+    const instance = new SowerEngine(container);
     instance.mount();
     rendererRef.current = instance;
     setRenderer(instance);
@@ -57,11 +57,11 @@ export function App() {
     };
   }, []);
 
-  // debug/test hook — used by scripts and E2E (mirrors __stdbRenderer)
+  // debug/test hook — used by scripts and E2E (mirrors __sowerRenderer)
   useEffect(() => {
-    (window as unknown as Record<string, unknown>).__stdbDoc = doc;
+    (window as unknown as Record<string, unknown>).__sowerDoc = doc;
     return () => {
-      delete (window as unknown as Record<string, unknown>).__stdbDoc;
+      delete (window as unknown as Record<string, unknown>).__sowerDoc;
     };
   }, [doc]);
 
@@ -69,7 +69,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand-row">
-          <span className="brand">stdBd</span>
+          <span className="brand">Sower</span>
           <span className="subtitle">Guitar Tab Editor — Phase 1a</span>
         </div>
         <TransportBar

@@ -1,5 +1,5 @@
 import { type ReactElement } from "react";
-import { G } from "@stdbd/render";
+import { G } from "@sower/render";
 import { DURATION_VALUES, type DurationValue } from "./caret";
 
 /** Bravura glyphs for the entry-palette note values (whole → 32nd). */

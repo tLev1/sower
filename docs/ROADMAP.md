@@ -1,6 +1,6 @@
-# stdBd — Product Roadmap
+# Sower — Product Roadmap
 
-> Working title: **stdBd** (name TBD — candidates: Adnoto, Selah, Jubal, Tabula)
+> Name: **Sower** (decided).
 > Solo developer. Web-first (TypeScript/React), packaged for desktop/iPad later.
 > Status snapshot: **Phase 1a complete on the in-house engine** — see §Current
 > status. Handover details in `handover.md`, architecture in
@@ -56,12 +56,18 @@
       fractional playhead ticks, fade-out pause/stop
 
 ### Phase 1b — Notation + articulations (~4 wks)
-- [ ] Note-value selection (1/4, 1/2, whole, 16ths; dots; triplets) — beam
-      rules + secondary beams already support mixed values; needs duration
-      UI + `setNoteDuration` wiring + caret tick-spacing
-- [ ] Articulation editing (palm mute, bend, slide, hammer-on, vibrato,
-      harmonics, ties) — engraver marks (PM, bend arrows, slurs, vibrato
-      wavy line) + input controls
+- [x] Note-value selection (1/4, 1/2, whole, 16ths; dots) — duration palette
+      + `setNoteDuration` wiring + caret follows the selected value (exact
+      advance, value-grid snapping); mixed values beam correctly
+- [x] Rest entry — `B` writes a rest of the selected value (configurable via
+      the same palette + dot), editable like notes, measure auto-adjusts
+- [ ] Triplets / tuplet entry (3:2 etc.) — needs a tuplet model + entry mode
+- [x] Simple articulations — palm mute ("P.M." above the staff), staccato
+      (dot), accent, ghost (parenthesized frets), let-ring: toggle on the
+      caret note with M/S/R/G/A, engraved marks, playback honors all
+- [ ] Expression articulations: bend, slide, hammer-on/pull-off, vibrato,
+      harmonics, ties — engraver marks (bend arrows, slurs, vibrato wavy
+      line) + input controls
 - [ ] Notation-only view toggle (engine renders one staff per track)
 - [ ] Export: MusicXML, MIDI, PDF (print stylesheet)
 - [ ] Import: Guitar Pro (.gp3-7), MIDI, MusicXML — converters target the
@@ -123,3 +129,30 @@
   zero-latency feedback, enforced via design tokens (`packages/ui`).
 - Monetization: freemium subscription; chord-chart autopilot = first AI
   paywall; client-side WASM inference preferred (cost + privacy).
+
+## Final chapter — mobile adaptation (AFTER the web app works as intended)
+
+> Do not start this before the web app is feature-complete and behaving the
+> way we want. This phase is a dedicated pass to bring Sower to mobile
+> phones. To-do list:
+
+- [ ] Define the complete control mapping for mobile phone users — every
+      desktop control needs a touch equivalent:
+  - [ ] fret entry (on-screen keypad / number pad, two-digit frets)
+  - [ ] note values + dots (duration palette, touch-sized targets)
+  - [ ] rests (`B` shortcut → touch button / gesture)
+  - [ ] articulations (palm mute, staccato, ghost, …)
+  - [ ] tempo / time signature / note length (long-press menus already exist
+        — tune the hit targets and popover sizing for thumbs)
+  - [ ] caret navigation (arrows → on-screen D-pad or drag gestures)
+  - [ ] undo/redo, measure insert/delete
+  - [ ] playback transport + metronome (thumb-reachable)
+- [ ] Touch gesture spec: tap = caret, long-press = context menu (done),
+      double-tap = edit note, drag = scroll/zoom; disambiguate vs scrolling
+- [ ] Mobile layout adaptation of the platform (responsive chrome: topbar,
+      transport, status bar → bottom bars; safe areas; portrait + landscape)
+- [ ] Score rendering on small screens (zoom/pinch, pan, readable fret sizes,
+      horizontal vs vertical fit policy)
+- [ ] Latency + audio on mobile browsers (autoplay policies, WebView quirks)
+- [ ] On-device testing pass (iOS Safari + Android Chrome), then the
+      mobile-specific UX polish checklist

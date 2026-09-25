@@ -6,9 +6,9 @@ import {
   type ReactElement,
   type RefObject,
 } from "react";
-import { TICKS_PER_QUARTER, type Score } from "@stdbd/core";
-import { tempoMarkAt } from "@stdbd/core";
-import { G } from "@stdbd/render";
+import { TICKS_PER_QUARTER, type Score } from "@sower/core";
+import { tempoMarkAt } from "@sower/core";
+import { G } from "@sower/render";
 import {
   DURATION_VALUES,
   durationIsDotted,

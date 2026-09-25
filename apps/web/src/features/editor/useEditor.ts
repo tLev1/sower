@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ScoreDocument } from "@stdbd/core";
-import { TICKS_PER_QUARTER, tempoMarkAt } from "@stdbd/core";
-import type { StdbdEngine } from "@stdbd/render";
-import type { ClickedPosition } from "@stdbd/render";
+import type { ScoreDocument } from "@sower/core";
+import { TICKS_PER_QUARTER, tempoMarkAt } from "@sower/core";
+import type { SowerEngine } from "@sower/render";
+import type { ClickedPosition } from "@sower/render";
 import {
   MAX_FRET,
   capacityOf,
@@ -11,7 +11,9 @@ import {
   moveCaretByTicks,
   moveCaretVertically,
   noteAt,
+  noteUnderCaret,
   openStringPitch,
+  restCovering,
   stringCount,
   type Caret,
   type DurationChoice,
@@ -22,7 +24,7 @@ export type EditResult = "applied" | "clamped" | "ignored";
 
 interface UseEditorArgs {
   document: ScoreDocument;
-  renderer: StdbdEngine | null;
+  renderer: SowerEngine | null;
 }
 
 /** Minimal structural key event — satisfied by both DOM and React events. */
@@ -159,34 +161,42 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
   );
 
   /**
-   * Selects the persistent entry duration. When the caret sits on a note,
-   * that note's duration is updated too (Guitar-Pro behavior).
+   * Selects the persistent entry duration. When the caret sits on a written
+   * note or rest, that item's duration is updated too (Guitar-Pro behavior).
    */
   const setEntryDuration = useCallback(
     (value: DurationValue, dotted: boolean): void => {
       setEntryDurationState({ value, dotted });
       const s = doc.score;
       const c = caretRef.current;
-      const existing = noteAt(s, c);
       const bar = s.bars[c.barIndex];
       const track = s.tracks[0];
-      if (!existing || !bar || !track) return;
-      execute({
-        type: "setNoteDuration",
-        trackId: track.id,
-        barId: bar.id,
-        noteId: existing.id,
-        duration: durationTicks(value, dotted),
-      });
+      if (!bar || !track) return;
+      const duration = durationTicks(value, dotted);
+      const existing = noteAt(s, c);
+      if (existing) {
+        execute({
+          type: "setNoteDuration",
+          trackId: track.id,
+          barId: bar.id,
+          noteId: existing.id,
+          duration,
+        });
+        return;
+      }
+      const rest = restCovering(bar, c.tick);
+      if (rest) {
+        execute({ type: "setRestDuration", trackId: track.id, barId: bar.id, restId: rest.id, duration });
+      }
     },
     [doc, execute],
   );
 
   /**
    * Note length from the score's context menu: sets the entry duration for
-   * notes written from that point on — and, when a written note sits at the
-   * clicked position, changes THAT note only (never the notes after it; the
-   * measure simply re-lays out around the new length).
+   * notes written from that point on — and, when a written note or rest sits
+   * at the clicked position, changes THAT item only (never the ones after it;
+   * the measure simply re-lays out around the new length).
    */
   const applyNoteLength = useCallback(
     (barIndex: number, tick: number, stringIndex: number | null, value: DurationValue, dotted: boolean): void => {
@@ -195,22 +205,71 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
       const bar = s.bars[barIndex];
       const track = s.tracks[0];
       if (!bar || !track) return;
+      const duration = durationTicks(value, dotted);
       const existing = bar.voices[0]?.notes.find(
         (n) => n.start === tick && (stringIndex === null || n.string === stringIndex),
       );
-      if (!existing) return;
-      const capacity = capacityOf(s, barIndex);
-      const duration = Math.min(
-        durationTicks(value, dotted),
-        Math.max(60, capacity - existing.start),
-      );
+      if (existing) {
+        execute({
+          type: "setNoteDuration",
+          trackId: track.id,
+          barId: bar.id,
+          noteId: existing.id,
+          duration: Math.min(duration, Math.max(60, capacityOf(s, barIndex) - existing.start)),
+        });
+        return;
+      }
+      const rest = restCovering(bar, tick);
+      if (rest) {
+        execute({ type: "setRestDuration", trackId: track.id, barId: bar.id, restId: rest.id, duration });
+      }
+    },
+    [doc, execute],
+  );
+
+  /**
+   * Writes a rest of the selected entry value at the caret and advances —
+   * the measure's auto-fill stays consistent around it (`B` key).
+   */
+  const writeRest = useCallback((): EditResult => {
+    const s = doc.score;
+    const c = caretRef.current;
+    const bar = s.bars[c.barIndex];
+    const track = s.tracks[0];
+    if (!bar || !track) return "ignored";
+    const chosen = entryDurationRef.current;
+    const duration = Math.min(
+      durationTicks(chosen.value, chosen.dotted),
+      Math.max(60, capacityOf(s, c.barIndex) - c.tick),
+    );
+    execute({
+      type: "addRest",
+      trackId: track.id,
+      barId: bar.id,
+      rest: { start: c.tick, duration },
+    });
+    lastPlacedRef.current = null;
+    setCaret(moveCaretByTicks(s, c, duration));
+    return "applied";
+  }, [doc, execute]);
+
+  /** Toggles a simple articulation on the note under the caret. */
+  const toggleArticulation = useCallback(
+    (articulation: "palmMute" | "staccato" | "letRing" | "ghost" | "accent"): EditResult => {
+      const s = doc.score;
+      const c = caretRef.current;
+      const bar = s.bars[c.barIndex];
+      const track = s.tracks[0];
+      const note = noteUnderCaret(s, c);
+      if (!bar || !track || !note) return "ignored";
       execute({
-        type: "setNoteDuration",
+        type: "toggleNoteArticulation",
         trackId: track.id,
         barId: bar.id,
-        noteId: existing.id,
-        duration,
+        noteId: note.id,
+        articulation,
       });
+      return "applied";
     },
     [doc, execute],
   );
@@ -407,13 +466,43 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
           e.preventDefault();
           deleteAtCaret();
           break;
+        case "b":
+        case "B":
+          e.preventDefault();
+          writeRest();
+          break;
+        case "m":
+        case "M":
+          e.preventDefault();
+          toggleArticulation("palmMute");
+          break;
+        case "s":
+        case "S":
+          e.preventDefault();
+          toggleArticulation("staccato");
+          break;
+        case "r":
+        case "R":
+          e.preventDefault();
+          toggleArticulation("letRing");
+          break;
+        case "g":
+        case "G":
+          e.preventDefault();
+          toggleArticulation("ghost");
+          break;
+        case "a":
+        case "A":
+          e.preventDefault();
+          toggleArticulation("accent");
+          break;
         case " ":
           e.preventDefault();
           rendererRef.current?.toggle();
           break;
       }
     },
-    [placeFret, deleteAtCaret, navigate, undo, redo],
+    [placeFret, deleteAtCaret, writeRest, toggleArticulation, navigate, undo, redo],
   );
 
   // window-level keyboard: editing works without focusing the score canvas
@@ -489,6 +578,7 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     container,
     setContainer,
     placeFret,
+    writeRest,
     setEntryDuration,
     applyNoteLength,
     deleteAtCaret,

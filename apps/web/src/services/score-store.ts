@@ -1,5 +1,7 @@
-import type { Score } from "@stdbd/core";
+import type { Score } from "@sower/core";
 
+// DB name kept from the old project name on purpose — renaming the database
+// would orphan scores already saved in users' browsers.
 const DB_NAME = "stdbd";
 const DB_VERSION = 1;
 const STORE = "scores";

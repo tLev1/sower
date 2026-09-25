@@ -1,5 +1,5 @@
-import type { BarId, Note, NoteId, Score, TrackId } from "../model/index.js";
-import { TICKS_PER_QUARTER } from "../model/index.js";
+import type { Articulation, BarId, Note, NoteId, Rest, Score, TrackId } from "../model/index.js";
+import { TICKS_PER_QUARTER, ticksPerBar } from "../model/index.js";
 /**
  * Event-sourced editing: every modification of a Score is a Command that
  * returns the new Score. Commands are pure functions; undo/redo, versioning,
@@ -18,7 +18,10 @@ export type Command =
   | AddBar
   | RemoveBar
   | SetBarTempo
-  | SetTimeSignature;
+  | SetTimeSignature
+  | AddRest
+  | SetRestDuration
+  | ToggleNoteArticulation;
 
 export interface SetNotePitch {
   readonly type: "setNotePitch";
@@ -97,6 +100,33 @@ export interface SetTimeSignature {
   readonly denominator: number;
 }
 
+export interface AddRest {
+  readonly type: "addRest";
+  readonly trackId: TrackId;
+  readonly barId: BarId;
+  readonly rest: {
+    readonly start: number;
+    readonly duration: number;
+  };
+}
+
+export interface SetRestDuration {
+  readonly type: "setRestDuration";
+  readonly trackId: TrackId;
+  readonly barId: BarId;
+  readonly restId: NoteId;
+  readonly duration: number;
+}
+
+/** Toggles a simple (parameterless) articulation on a written note. */
+export interface ToggleNoteArticulation {
+  readonly type: "toggleNoteArticulation";
+  readonly trackId: TrackId;
+  readonly barId: BarId;
+  readonly noteId: NoteId;
+  readonly articulation: "palmMute" | "staccato" | "letRing" | "ghost" | "accent";
+}
+
 export interface CommandContext {
   /** Monotonic id generator shared across the editing session. */
   nextNoteId(): NoteId;
@@ -115,10 +145,22 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
         string: command.string ?? note.string,
       }));
     case "setNoteDuration":
-      return mapNote(score, command.trackId, command.barId, command.noteId, (note) => ({
-        ...note,
-        duration: command.duration,
-      }));
+      return mapVoice(score, command.trackId, command.barId, (notes, rests) => {
+        const target = notes.find((n) => n.id === command.noteId);
+        if (!target) {
+          throw new Error(
+            `Note ${String(command.noteId)} not found in bar ${String(command.barId)} (track ${String(command.trackId)})`,
+          );
+        }
+        return [
+          notes.map((note) =>
+            note.id === command.noteId ? { ...note, duration: command.duration } : note,
+          ),
+          // a lengthened note takes over the rests it covers; a shortened one
+          // simply leaves a gap the measure fills with new rests
+          carveRests(rests, target.start, target.start + command.duration),
+        ];
+      });
     case "addNote": {
       const note = {
         id: ctx.nextNoteId(),
@@ -130,12 +172,16 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
         velocity: command.note.velocity ?? 100,
         articulations: [],
       };
-      return mapVoice(score, command.trackId, command.barId, (notes) => [...notes, note]);
+      return mapVoice(score, command.trackId, command.barId, (notes, rests) => [
+        [...notes, note],
+        carveRests(rests, note.start, note.start + note.duration),
+      ]);
     }
     case "removeNote":
-      return mapVoice(score, command.trackId, command.barId, (notes) =>
+      return mapVoice(score, command.trackId, command.barId, (notes, rests) => [
         notes.filter((n) => n.id !== command.noteId),
-      );
+        rests,
+      ]);
     case "setTrackInstrument":
       return {
         ...score,
@@ -233,6 +279,93 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
         ),
       };
     }
+    case "addRest": {
+      const { start } = command.rest;
+      if (!Number.isInteger(start) || start < 0) {
+        throw new Error(`Invalid rest start ${String(start)}`);
+      }
+      if (!Number.isInteger(command.rest.duration) || command.rest.duration < 30) {
+        throw new Error(`Invalid rest duration ${String(command.rest.duration)}`);
+      }
+      const restBar = score.bars.find((b) => b.id === command.barId);
+      const capacity = restBar
+        ? ticksPerBar(restBar.timeSignature)
+        : command.rest.start + command.rest.duration;
+      const duration = Math.min(command.rest.duration, Math.max(30, capacity - start));
+      // MuseScore overwrite semantics: the rest takes the time it covers —
+      // notes starting inside it are replaced, edge notes are trimmed
+      return mapVoice(score, command.trackId, command.barId, (notes, rests) => {
+        const end = start + duration;
+        const keptNotes: Note[] = [];
+        for (const note of notes) {
+          const noteEnd = note.start + note.duration;
+          if (note.start >= start && note.start < end) continue; // starts inside → replaced
+          if (note.start < start && noteEnd > start) {
+            const trimmed = start - note.start;
+            if (trimmed >= 30) keptNotes.push({ ...note, duration: trimmed });
+            continue;
+          }
+          keptNotes.push(note);
+        }
+        return [
+          keptNotes,
+          [...carveRests(rests, start, end), { id: ctx.nextNoteId(), start, duration }],
+        ];
+      });
+    }
+    case "setRestDuration": {
+      if (!Number.isInteger(command.duration) || command.duration < 30) {
+        throw new Error(`Invalid rest duration ${String(command.duration)}`);
+      }
+      const targetBar = score.bars.find((b) => b.id === command.barId);
+      const capacity = targetBar ? ticksPerBar(targetBar.timeSignature) : Number.POSITIVE_INFINITY;
+      return mapVoice(score, command.trackId, command.barId, (notes, rests) => {
+        const target = rests.find((r) => r.id === command.restId);
+        if (!target) {
+          throw new Error(
+            `Rest ${String(command.restId)} not found in bar ${String(command.barId)} (track ${String(command.trackId)})`,
+          );
+        }
+        // a rest is empty time: clamp to the next written event (and the bar)
+        // so editing one never changes the notes after it
+        let limit = capacity - target.start;
+        for (const n of notes) {
+          if (n.start >= target.start) limit = Math.min(limit, n.start - target.start);
+        }
+        for (const r of rests) {
+          if (r.id !== command.restId && r.start >= target.start) {
+            limit = Math.min(limit, r.start - target.start);
+          }
+        }
+        const duration = Math.max(30, Math.min(command.duration, limit));
+        return [notes, rests.map((r) => (r.id === command.restId ? { ...r, duration } : r))];
+      });
+    }
+    case "toggleNoteArticulation":
+      return mapNote(score, command.trackId, command.barId, command.noteId, (note) => {
+        const present = note.articulations.some((a) => a.kind === command.articulation);
+        return {
+          ...note,
+          articulations: present
+            ? note.articulations.filter((a) => a.kind !== command.articulation)
+            : [...note.articulations, articulationOf(command.articulation)],
+        };
+      });
+  }
+}
+
+function articulationOf(kind: ToggleNoteArticulation["articulation"]): Articulation {
+  switch (kind) {
+    case "palmMute":
+      return { kind: "palmMute" };
+    case "staccato":
+      return { kind: "staccato" };
+    case "letRing":
+      return { kind: "letRing" };
+    case "ghost":
+      return { kind: "ghost" };
+    case "accent":
+      return { kind: "accent" };
   }
 }
 
@@ -251,7 +384,7 @@ function mapNote(
     const voices = bar.voices.map((voice, vi) => {
       if (vi !== 0) return voice;
       const notes = voice.notes.map((note) => (note.id === noteId ? fn(note) : note));
-      return { notes };
+      return { ...voice, notes };
     });
     return { ...bar, voices };
   });
@@ -262,17 +395,44 @@ function mapVoice(
   score: Score,
   trackId: TrackId,
   barId: BarId,
-  fn: (notes: readonly Note[]) => readonly Note[],
+  fn: (notes: readonly Note[], rests: readonly Rest[]) => readonly [readonly Note[], readonly Rest[]],
 ): Score {
   if (!hasBar(score, barId)) {
     throw new Error(`Bar ${String(barId)} not found (track ${String(trackId)})`);
   }
   const bars = score.bars.map((bar) => {
     if (bar.id !== barId) return bar;
-    const voices = bar.voices.map((voice, vi) => (vi === 0 ? { notes: fn(voice.notes) } : voice));
+    const voices = bar.voices.map((voice, vi) => {
+      if (vi !== 0) return voice;
+      const [notes, rests] = fn(voice.notes, voice.rests ?? []);
+      return { ...voice, notes, rests };
+    });
     return { ...bar, voices };
   });
   return { ...score, bars };
+}
+
+/**
+ * Notes own their time: any written rest overlapping [start, end) is
+ * trimmed to the edges of the span or removed (MuseScore overwrite
+ * semantics — entering content replaces the rests it covers).
+ */
+function carveRests(rests: readonly Rest[], start: number, end: number): readonly Rest[] {
+  const out: Rest[] = [];
+  for (const rest of rests) {
+    const restEnd = rest.start + rest.duration;
+    if (restEnd <= start || rest.start >= end) {
+      out.push(rest);
+      continue;
+    }
+    if (rest.start < start && restEnd > start) {
+      out.push({ ...rest, duration: start - rest.start });
+    }
+    if (restEnd > end && rest.start < end) {
+      out.push({ ...rest, start: end, duration: restEnd - end });
+    }
+  }
+  return out;
 }
 
 function hasNote(score: Score, barId: BarId, noteId: NoteId): boolean {

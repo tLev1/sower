@@ -1,10 +1,10 @@
-﻿import { chromium } from "playwright";
+import { chromium } from "playwright";
 const browser = await chromium.launch({ channel: "msedge" });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 await page.goto("http://localhost:5173", { waitUntil: "networkidle", timeout: 30000 });
 await page.waitForTimeout(2500);
 await page.evaluate(() => {
-  const r = window.__stdbRenderer;
+  const r = window.__sowerRenderer;
   const orig = r.loadScore.bind(r);
   window.__loads = [];
   r.loadScore = (s) => { window.__loads.push(s.bars.length); return orig(s); };
@@ -20,7 +20,7 @@ const findBtn = (action) =>
 const countBars = () =>
   page.evaluate(() => {
     let i = 0;
-    while (window.__stdbRenderer.getBarRect(i)) i++;
+    while (window.__sowerRenderer.getBarRect(i)) i++;
     return i;
   });
 console.log("start bars:", await countBars());

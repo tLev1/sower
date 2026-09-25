@@ -1,4 +1,4 @@
-﻿import { chromium } from "playwright";
+import { chromium } from "playwright";
 const browser = await chromium.launch({ channel: "msedge" });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, deviceScaleFactor: 2 });
 await page.goto("http://localhost:5173", { waitUntil: "networkidle", timeout: 30000 });
@@ -6,7 +6,7 @@ await page.waitForTimeout(2500);
 
 // two-digit entry: Ctrl+1 then 5 -> fret 15 on string 0 at beat 1
 await page.evaluate(() => {
-  const r = window.__stdbRenderer.pointFor({ barIndex: 0, tick: 0, stringIndex: 0 });
+  const r = window.__sowerRenderer.pointFor({ barIndex: 0, tick: 0, stringIndex: 0 });
   const ev = new PointerEvent("pointerdown", { clientX: r.x, clientY: r.y, bubbles: true });
   document.querySelector(".score-scroll").dispatchEvent(ev);
 });

@@ -1,5 +1,5 @@
-import type { Score } from "@stdbd/core";
-import { TICKS_PER_QUARTER, tempoUnitOf, ticksPerBar } from "@stdbd/core";
+import type { Score } from "@sower/core";
+import { TICKS_PER_QUARTER, tempoUnitOf, ticksPerBar } from "@sower/core";
 import type { ScorePlayer } from "../renderer.js";
 
 /**
