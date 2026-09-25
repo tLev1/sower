@@ -19,21 +19,26 @@ import {
 } from "./caret";
 
 export interface SheetMenuState {
-  readonly kind: "context" | "tempo" | "timesig";
+  readonly kind: "context" | "tempo" | "timesig" | "notelen";
   readonly barIndex: number;
   /** Viewport coordinates the menu/popover anchors to. */
   readonly x: number;
   readonly y: number;
+  /** Clicked score position (context menu) — targets a written note. */
+  readonly tick?: number | undefined;
+  readonly stringIndex?: number | null | undefined;
 }
 
 interface SheetMenuProps {
   readonly menu: SheetMenuState;
   readonly score: Score;
+  readonly entryDuration: DurationChoice;
   readonly onClose: () => void;
   readonly onMenuAction: (state: SheetMenuState) => void;
   readonly onTempoChange: (barIndex: number, bpm: number, unitTicks: number) => void;
   readonly onRemoveTempo: (barIndex: number) => void;
   readonly onTimeSignatureChange: (barIndex: number, numerator: number, denominator: number) => void;
+  readonly onNoteLength: (value: DurationValue, dotted: boolean) => void;
   readonly onInsertMeasure: (barIndex: number) => void;
   readonly onDeleteMeasure: (barIndex: number) => boolean;
 }
@@ -131,8 +136,16 @@ function ContextMenu(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
       <button
         className="sheet-menu-item"
         role="menuitem"
-        onClick={() => { props.onMenuAction({ kind: "tempo", barIndex: props.menu.barIndex, x: props.menu.x, y: props.menu.y }); }
-        }
+        onClick={() => {
+          props.onMenuAction({
+            kind: "tempo",
+            barIndex: props.menu.barIndex,
+            x: props.menu.x,
+            y: props.menu.y,
+            tick: props.menu.tick,
+            stringIndex: props.menu.stringIndex,
+          });
+        }}
       >
         <span className="sheet-menu-glyph" aria-hidden>{glyph(G.metNoteQuarterUp)}</span>
         Tempo…
@@ -140,8 +153,33 @@ function ContextMenu(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
       <button
         className="sheet-menu-item"
         role="menuitem"
-        onClick={() => { props.onMenuAction({ kind: "timesig", barIndex: props.menu.barIndex, x: props.menu.x, y: props.menu.y }); }
-        }
+        onClick={() => {
+          props.onMenuAction({
+            kind: "notelen",
+            barIndex: props.menu.barIndex,
+            x: props.menu.x,
+            y: props.menu.y,
+            tick: props.menu.tick,
+            stringIndex: props.menu.stringIndex,
+          });
+        }}
+      >
+        <span className="sheet-menu-glyph" aria-hidden>{glyph(G.metNote8thUp)}</span>
+        Note length…
+      </button>
+      <button
+        className="sheet-menu-item"
+        role="menuitem"
+        onClick={() => {
+          props.onMenuAction({
+            kind: "timesig",
+            barIndex: props.menu.barIndex,
+            x: props.menu.x,
+            y: props.menu.y,
+            tick: props.menu.tick,
+            stringIndex: props.menu.stringIndex,
+          });
+        }}
       >
         <span className="sheet-menu-glyph" aria-hidden>{glyph(G.timeSigCommon)}</span>
         Time signature…
@@ -176,7 +214,7 @@ function ContextMenu(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
 function MarkPopover(props: SheetMenuProps & { menu: SheetMenuState }): ReactElement {
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, props.onClose);
-  const width = props.menu.kind === "tempo" ? 256 : 280;
+  const width = props.menu.kind === "tempo" ? 256 : props.menu.kind === "notelen" ? 252 : 280;
   return (
     <div className="sheet-popover" style={anchorStyle(props.menu.x, props.menu.y, width)} ref={ref}>
       {props.menu.kind === "tempo" ? (
@@ -187,6 +225,12 @@ function MarkPopover(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
           onRemoveTempo={props.onRemoveTempo}
           onClose={props.onClose}
         />
+      ) : props.menu.kind === "notelen" ? (
+        <NoteLengthEditor
+          barIndex={props.menu.barIndex}
+          entry={props.entryDuration}
+          onNoteLength={props.onNoteLength}
+        />
       ) : (
         <TimeSigEditor
           barIndex={props.menu.barIndex}
@@ -194,6 +238,64 @@ function MarkPopover(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
           onTimeSignatureChange={props.onTimeSignatureChange}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * Note-length picker (same shape as the tempo popover, without the BPM box).
+ * Selecting a value:
+ *  - sets the entry duration for notes written from that point on
+ *  - if a written note sits at the clicked position, changes THAT note only
+ *    (following notes are untouched; the measure re-lays out around it)
+ */
+function NoteLengthEditor(props: {
+  readonly barIndex: number;
+  readonly entry: DurationChoice;
+  readonly onNoteLength: (value: DurationValue, dotted: boolean) => void;
+}): ReactElement {
+  const [unit, setUnit] = useState<DurationChoice>(props.entry);
+  return (
+    <div className="tempo-editor">
+      <div className="sheet-popover-title">Note length · measure {props.barIndex + 1}</div>
+      <div className="tempo-units" role="radiogroup" aria-label="Note length">
+        {DURATION_VALUES.map((v) => (
+          <button
+            key={v}
+            role="radio"
+            aria-checked={v === unit.value}
+            className={v === unit.value ? "glyph-btn active" : "glyph-btn"}
+            title={UNIT_LABEL[v]}
+            onClick={() => {
+              setUnit({ value: v, dotted: unit.dotted });
+              props.onNoteLength(v, unit.dotted);
+            }}
+          >
+            {glyph(UNIT_GLYPH[v])}
+          </button>
+        ))}
+        <button
+          className={unit.dotted ? "glyph-btn dot active" : "glyph-btn dot"}
+          aria-pressed={unit.dotted}
+          title="Dotted"
+          onClick={() => {
+            setUnit({ value: unit.value, dotted: !unit.dotted });
+            props.onNoteLength(unit.value, !unit.dotted);
+          }}
+        >
+          {glyph(G.metAugmentationDot)}
+        </button>
+      </div>
+      <div className="tempo-row">
+        <span className="glyph-preview" aria-hidden>
+          {glyph(UNIT_GLYPH[unit.value])}
+          {unit.dotted ? glyph(G.metAugmentationDot) : ""}
+        </span>
+        <span className="sheet-popover-unit">
+          {unit.dotted ? "dotted " : ""}
+          {UNIT_LABEL[unit.value].toLowerCase()}
+        </span>
+      </div>
     </div>
   );
 }

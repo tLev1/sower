@@ -223,6 +223,104 @@ if (tsClick) {
   await page.waitForTimeout(200);
 }
 
+// ---- 6. "Note length" from the context menu -----------------------------------
+// palette is still dotted from section 3 — reset to plain values first
+await page.click('.duration-picker .duration-btn.dot');
+await page.waitForTimeout(150);
+// right-click exactly on a written note (bar 2's first note: tick 0, string 3)
+const notePoint = await page.evaluate(() =>
+  window.__stdbRenderer.pointFor({ barIndex: 1, tick: 0, stringIndex: 3 }),
+);
+await page.mouse.click(notePoint.x, notePoint.y, { button: "right" });
+await page.waitForTimeout(250);
+await page.click('.sheet-menu .sheet-menu-item:has-text("Note length")');
+await page.waitForTimeout(250);
+const nlOpen = await page.evaluate(() => document.querySelector(".sheet-popover .tempo-editor") !== null);
+check("note-length popover opens from the context menu", nlOpen === true);
+await page.click('.tempo-units .glyph-btn[title="Quarter note"]');
+await page.waitForTimeout(250);
+const nl = await page.evaluate(() =>
+  window.__stdbDoc.score.bars[1].voices[0].notes.map((n) => ({
+    start: n.start,
+    string: n.string,
+    duration: n.duration,
+  })),
+);
+const target = nl.find((n) => n.start === 0 && n.string === 3);
+const later = nl.filter((n) => n.start > 0);
+check(
+  "note length changes ONLY the clicked note (notes after it untouched)",
+  target?.duration === 480 && later.length > 0 && later.every((n) => n.duration === 240),
+  `clicked=${JSON.stringify(target)} later=${JSON.stringify(later.slice(0, 3))}`,
+);
+const modeUpdated = await page.evaluate(
+  () => document.querySelector('.duration-picker .duration-btn[title="Quarter note"]')?.classList.contains("active") ?? false,
+);
+check("entry duration mode updates too (future notes get it)", modeUpdated === true);
+await page.mouse.click(1300, 760);
+await page.waitForTimeout(200);
+
+// ---- 7. naturally writable measure: four 16ths type side by side -------------
+await page.click('.duration-picker .duration-btn[title="16th note"]');
+await page.waitForTimeout(150);
+const addBtn = await page.evaluate(() => {
+  const el = document.querySelector('[data-stdb-action="add-bar"]');
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+});
+await page.mouse.click(addBtn.x, addBtn.y);
+await page.waitForTimeout(400);
+const emptyPoint = await page.evaluate(() =>
+  window.__stdbRenderer.pointFor({ barIndex: 3, tick: 0, stringIndex: 2 }),
+);
+await page.mouse.click(emptyPoint.x, emptyPoint.y);
+await page.waitForTimeout(150);
+const glyphCount = () =>
+  page.evaluate(() => {
+    const s = document.querySelector(".stdb-score-static");
+    return {
+      flags: [...s.querySelectorAll("text.stdb-flag")].length,
+      beams: [...s.querySelectorAll("polygon")].length,
+    };
+  });
+const g0 = await glyphCount();
+await page.keyboard.press("5");
+await page.keyboard.press("7");
+await page.keyboard.press("4");
+await page.keyboard.press("2");
+await page.waitForTimeout(300);
+const sixteenths = await page.evaluate(() =>
+  window.__stdbDoc.score.bars[3].voices[0].notes.map((n) => ({ start: n.start, duration: n.duration })),
+);
+check(
+  "four typed 16ths land side by side (0,120,240,360 × 120)",
+  sixteenths.length === 4 &&
+    sixteenths.every((n, i) => n.start === i * 120 && n.duration === 120),
+  JSON.stringify(sixteenths),
+);
+const g1 = await glyphCount();
+check(
+  "the four 16ths beam together (no flags, one beam group)",
+  g1.flags === g0.flags && g1.beams - g0.beams === 6,
+  `flags ${g0.flags}→${g1.flags}, beams ${g0.beams}→${g1.beams} (6 = 3 pairs × 2 beam levels = linked 16ths)`,
+);
+// writing over a rest region: click a 16th position deep in the rests and type
+const deepPoint = await page.evaluate(() =>
+  window.__stdbRenderer.pointFor({ barIndex: 3, tick: 600, stringIndex: 2 }),
+);
+await page.mouse.click(deepPoint.x, deepPoint.y);
+await page.waitForTimeout(150);
+await page.keyboard.press("3");
+await page.waitForTimeout(250);
+const deepNote = await page.evaluate(() =>
+  window.__stdbDoc.score.bars[3].voices[0].notes.find((n) => n.fret === 3),
+);
+check(
+  "a click deep in the rests writes at the clicked 16th (measure is modifiable)",
+  deepNote?.start === 600,
+  JSON.stringify(deepNote ? { start: deepNote.start, duration: deepNote.duration } : null),
+);
+
 await page.screenshot({ path: "C:/dev/temp/opencode/sheet-v2.png", fullPage: false });
 
 console.log("\n--- RESULTS ---");

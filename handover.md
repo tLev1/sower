@@ -36,7 +36,7 @@ Rivus, Stilla. Working title/folder: **stdBd** (`C:\dev\stdBd`).
 | Rendering | **stdBd engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
 | Playback | WebAudio Karplus-Strong synth (v1) | articulation-aware; sample engines plug in via SynthEngine seam later |
 | Fonts | Bravura (public/fonts), Inter Variable + JetBrains Mono Variable (fontsource) | music glyphs + UI/mono type |
-| Tests | Vitest 3 | 54 tests green (28 core + 16 render + 10 web) |
+| Tests | Vitest 3 | 59 tests green (28 core + 19 render + 12 web) |
 | Lint | ESLint flat config, typescript-eslint strictTypeChecked | `any` is an error; `scripts/` ignored |
 | CI | `.github/workflows/ci.yml` | lint → typecheck → test → build |
 | E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** — always launch Edge |
@@ -166,8 +166,10 @@ Git repo on `main`; commit as you go (conventional commits).
   absolute tick, even mid-playback). **Metronome**: toggle in the transport
   (pendulum icon) — the click follows the MUSICAL SHEET only: the notated
   beat grid during playback (accented downbeats, compound x/8/x/16 pulse on
-  dotted beats, tempo/meter changes honored). No free-running clicks of its
-  own while the music is stopped.
+  dotted beats, tempo/meter changes honored) and it plays EVERY beat of the
+  measure through trailing rests — `totalSec` runs to the END OF THE LAST
+  BAR, not to the last note. No free-running clicks of its own while the
+  music is stopped.
 - **Notation-accurate rest filling** (Gould, "Behind Bars"): empty measures
   take a single whole rest; other gaps decompose greedily into the longest
   standard rests, half rests only aligned to the half bar, and compound
@@ -211,9 +213,15 @@ Git repo on `main`; commit as you go (conventional commits).
   click: tempo (beat-unit palette + dotted toggle + BPM input, "Remove tempo
   mark" when a marker exists) and meter (17 preset chips + custom n/d, applied
   from that measure onward). Right-click anywhere on the sheet (desktop) or a
-  ~550 ms long-press (touch) opens the score context menu — tempo, time
-  signature, insert measure after, delete measure — all targeting the clicked
-  measure (`onContextMenu`, `onSheetMarkerClicked` on the engine).
+  ~550 ms long-press (touch) opens the score context menu — tempo, note
+  length, time signature, insert measure after, delete measure — all
+  targeting the clicked measure (`onContextMenu`, `onSheetMarkerClicked` on
+  the engine). **Note length** (popover like tempo's, without the BPM box):
+  selecting a value sets the entry duration for notes written from that
+  point on — and when a written note sits at the clicked position, changes
+  THAT note only (never the notes after it; the measure re-lays out around
+  the new length, clamped to the bar). This is separate from the tempo
+  (BPM), which stays per-bar and untouched by note-length edits.
 - **Meter changes mid-system** (classical convention — Beethoven/Mozart/
   Rachmaninoff): a time-signature change is engraved AT the measure where it
   begins, even when that bar sits mid-system (digits after the barline, not
@@ -226,8 +234,14 @@ Git repo on `main`; commit as you go (conventional commits).
   placed note uses the selected value until it is changed; changing it while
   the caret sits on a note also updates that note (`setNoteDuration`);
   chord tones added to an existing beat inherit the beat's duration; new notes
-  clamp to the remaining bar capacity; auto-advance skips the placed value's
-  length on the eighth grid.
+  clamp to the remaining bar capacity. **The caret follows the selected
+  value**: auto-advance is exactly the placed duration (four typed 16ths land
+  at 0/120/240/360 and beam together), arrows step by the value, click
+  snapping rounds to the value's grid, and the caret clamps where the value
+  still fits (`moveCaretByTicks` in caret.ts). Clicks resolve their tick by
+  interpolating between beat columns (piecewise-linear inverse of `xAtTick`)
+  instead of snapping to derived-rest starts — auto-filled rests never block
+  writing; the measure is freely writable at the current value's resolution.
 - **Play-from-selection**: the player resolves the start position into
   seconds AFTER the tempo map exists (`beginAt()` rebuilds the timeline
   first — converting earlier, with an empty tempo map, made playback start
@@ -263,11 +277,17 @@ Git repo on `main`; commit as you go (conventional commits).
   playhead, updated per frame — the markup memo skips no-op renders).
 - Beam groups follow meter conventions (`beamGroupSize`): 4/4 beams eighths
   in groups of 4 (half-bar), 3/4 in 3, 2/4 in 2, compound (6/8) in 3 per
-  dotted beat. Stem direction per Gould's rule: the note farthest from the
-  middle line decides (ties up). Measures are contiguous — barlines are
-  shared between bars, no gaps. Noteheads offset for unisons/seconds
-  (`headDxs`); leger lines drawn beyond the staff (`legerPositions`);
-  accidentals are key-aware with measure-scoped memory (`accidentalFor`).
+  dotted beat. **Inside** a run the beam is broken per Gould ("Behind Bars"):
+  between adjacent notes more than an octave apart (`BEAM_BREAK_INTERVAL`),
+  and wherever the straight beam line would touch/cross a notehead
+  (`BEAM_HEAD_CLEARANCE`, tip-line model with STEM_LEN 3.4 spaces) —
+  `splitBeamRun` in layout.ts; isolated beats fall back to flags
+  automatically via beamId = -1. Stem direction per Gould's rule: the note
+  farthest from the middle line decides (ties go up). Measures are contiguous
+  — barlines are shared between bars, no gaps. Noteheads offset for
+  unisons/seconds (`headDxs`); leger lines drawn beyond the staff
+  (`legerPositions`); accidentals are key-aware with measure-scoped memory
+  (`accidentalFor`).
 - **Playhead track**: the playhead moves on a piecewise-linear knot table
   over ABSOLUTE ticks (`layout.playheadKnots` — one knot per beat column, a
   trailing knot at each system's final barline). Segments within a system
@@ -365,16 +385,22 @@ Git repo on `main`; commit as you go (conventional commits).
 
 ## 7. Verification status (last run: all green)
 
-- lint / typecheck / 54 unit tests / production build
-- Player correctness (`probe-player.mjs`, 8/8): first note audible 33 ms
-  after play from a late-bar selection (the old scheduler delayed sound by
-  the selection's absolute time ≈5 s); notes sound their full notated length
-  on a pitch-independent 2.00 s sustain ring (all buffers equal — was
-  0.55–3.2 s pitch-dependent, so note length had nothing to do with the
-  notation) with a ~120 ms release; eighths spaced 312 ms @96 / 156 ms @192
-  (2× ratio) and a mid-playback tempo edit slows them live; metronome is
-  silent while stopped and clicks the sheet's beat grid (625 ms) during
-  playback ✓
+- lint / typecheck / 56 unit tests / production build
+- Player correctness (`probe-player.mjs`, 9/9): first note audible 26 ms
+  after play from a late-bar selection; notes sound their full notated length
+  on a pitch-independent 2.00 s sustain ring with a ~120 ms release; eighths
+  spaced 312 ms @96 / 156 ms @192 (2× ratio) and a mid-playback tempo edit
+  slows them live; metronome silent while stopped, clicks the sheet's beat
+  grid during playback AND all 4 beats of a 4/4 measure through trailing
+  rests (625 ms gaps) ✓
+- Sheet editing (`probe-sheet-v2.mjs`, 21/21): instant play-from-selection,
+  tempo mark → ♪. = 85 (unit 360), meter popover → 6/8 mid-system, right-click
+  menu (tempo / note length / meter / insert / delete), quarter + dotted
+  palette durations, "Note length" changes ONLY the clicked note (240→480)
+  while the notes after it stay untouched, entry mode updates; four typed
+  16ths land side by side (0/120/240/360) and beam together, and a click deep
+  in the auto-rests writes exactly at the clicked 16th (measure is freely
+  writable) ✓
 - Browser-verified via `scripts/interact-test.mjs` (real Edge):
   - click on TAB number → `Bar 1 · String 1 · Step 1` ✓
   - click empty A2 line → `Bar 1 · String 5 · Step 3` ✓

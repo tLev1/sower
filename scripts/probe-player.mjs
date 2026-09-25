@@ -200,6 +200,45 @@ check(
   `count=${grid.clickCount} gaps=${grid.clickGaps.map((g) => (g * 1000).toFixed(0)).join(",")}ms`,
 );
 
+// 4c. clicks must continue through trailing rests — all 4 beats of the bar
+const addBtn = await page.evaluate(() => {
+  const el = document.querySelector('[data-stdb-action="add-bar"]');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+});
+await page.mouse.click(addBtn.x, addBtn.y);
+await page.waitForTimeout(400);
+await page.click('.duration-picker .duration-btn[title="Quarter note"]');
+await page.waitForTimeout(150);
+const emptyBar = await page.evaluate(() =>
+  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 2 }),
+);
+await page.mouse.click(emptyBar.x, emptyBar.y);
+await page.waitForTimeout(150);
+await page.keyboard.press("5"); // one quarter at beat 1 — the rest of the bar is rests
+await page.keyboard.press("ArrowLeft");
+await page.keyboard.press("ArrowLeft"); // caret back to the bar start
+await page.waitForTimeout(200);
+const restBar = await page.evaluate(() => {
+  window.__srcLog.length = 0;
+  document.querySelector(".metronome-btn").click(); // ON
+  window.__stdbRenderer.play();
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve(window.__stats());
+      window.__stdbRenderer.stop();
+      document.querySelector(".metronome-btn").click(); // OFF
+    }, 2800);
+  });
+});
+const restClicks = restBar.clickGaps.map((g) => (g * 1000).toFixed(0));
+check(
+  "4c. metronome plays ALL beats of the measure (clicks through the rests)",
+  restBar.clickCount >= 4 && restBar.clickGaps.every((g) => Math.abs(g - 0.625) < 0.05),
+  `count=${restBar.clickCount} gaps=${restClicks.join(",")}ms (4/4 → 4 clicks/bar)`,
+);
+
 console.log("\n--- RESULTS ---");
 for (const line of [...PASS, ...FAIL]) console.log(line);
 console.log(`\n${PASS.length} passed, ${FAIL.length} failed`);

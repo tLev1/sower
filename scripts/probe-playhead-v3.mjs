@@ -31,9 +31,11 @@ await page.waitForTimeout(150);
 await page.keyboard.press("5");
 await page.waitForTimeout(250);
 
-// caret back ON the quarter (tick 0): caret auto-advanced to 480 → ← twice
-await page.keyboard.press("ArrowLeft");
-await page.keyboard.press("ArrowLeft");
+// caret back ON the quarter (tick 0): click its column (grid-independent)
+const qPoint = await page.evaluate(() =>
+  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 2 }),
+);
+await page.mouse.click(qPoint.x, qPoint.y);
 await page.waitForTimeout(150);
 // warm-up play (absorbs one-time headless resume latency)
 await page.evaluate(() => window.__stdbRenderer.play());
@@ -72,7 +74,35 @@ await page.evaluate(() => window.__stdbRenderer.stop());
 await page.waitForTimeout(500);
 
 // ---- B. carry-over: caret INSIDE the sounding quarter (tick 240) --------------
-await page.keyboard.press("ArrowRight"); // tick 0 → 240 (quarter still sounding)
+// park the caret on an empty string first so the palette click only sets the
+// mode, then step the grid to eighths and land inside the quarter
+const emptyStr = await page.evaluate(() =>
+  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 0, stringIndex: 5 }),
+);
+await page.mouse.click(emptyStr.x, emptyStr.y);
+await page.waitForTimeout(120);
+await page.click('.duration-picker .duration-btn[title="Eighth note"]');
+await page.waitForTimeout(150);
+const midPoint = await page.evaluate(() =>
+  window.__stdbRenderer.pointFor({ barIndex: 2, tick: 240, stringIndex: 2 }),
+);
+await page.mouse.click(midPoint.x, midPoint.y);
+await page.waitForTimeout(150);
+const beforeRun = await page.evaluate(() => {
+  const n = window.__stdbDoc.score.bars[2].voices[0].notes[0];
+  return { duration: n?.duration ?? 0 };
+});
+if (beforeRun.duration !== 480) {
+  // safety: restore the quarter if a palette click mutated it
+  await page.evaluate(() => {
+    const doc = window.__stdbDoc;
+    const track = doc.score.tracks[0];
+    const bar = doc.score.bars[2];
+    const n = bar.voices[0].notes[0];
+    if (n) doc.execute({ type: "setNoteDuration", trackId: track.id, barId: bar.id, noteId: n.id, duration: 480 });
+  });
+  await page.waitForTimeout(150);
+}
 const carryRun = await page.evaluate(() => {
   const t0 = performance.now();
   let fired = null;

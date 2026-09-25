@@ -67,6 +67,8 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
         barIndex: request.barIndex,
         x: request.clientX,
         y: request.clientY,
+        tick: request.tick,
+        stringIndex: request.stringIndex,
       });
     });
     return () => {
@@ -114,11 +116,14 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
         <SheetMenu
           menu={menu}
           score={score}
+          entryDuration={editor.entryDuration}
           onClose={closeMenu}
           onMenuAction={setMenu}
           onTempoChange={(barIndex, bpm, unitTicks) => { editor.setTempoAtBar(barIndex, bpm, unitTicks); }}
           onRemoveTempo={editor.removeTempoAtBar}
           onTimeSignatureChange={editor.setTimeSignatureAtBar}
+          onNoteLength={(value, dotted) => { editor.applyNoteLength(menu.barIndex, menu.tick ?? 0, menu.stringIndex ?? null, value, dotted); }
+          }
           onInsertMeasure={editor.insertBarAfter}
           onDeleteMeasure={(barIndex) => editor.removeBarAt(barIndex)}
         />

@@ -234,6 +234,44 @@ describe("computeLayout", () => {
     expect(ids[6]).toBe(ids[7]);
   });
 
+  it("breaks beams between notes more than an octave apart (Gould)", () => {
+    const score = buildScore();
+    const bar = score.bars[0];
+    if (!bar) return;
+    // two eighths spanning two octaves (fret 0 low E → fret 12 high E)
+    const eighth = TICKS_PER_QUARTER / 2;
+    const low: Note = { id: 600 as never, pitch: 40, string: 5, fret: 0, start: 0, duration: eighth, velocity: 100, articulations: [] };
+    const high: Note = { id: 601 as never, pitch: 76, string: 0, fret: 12, start: eighth, duration: eighth, velocity: 100, articulations: [] };
+    const layout = computeLayout(
+      { ...score, bars: [{ ...bar, voices: [{ notes: [low, high] }] }] },
+      { width: 1200 },
+    );
+    const ids = layout.systems[0]?.bars[0]?.tracks[0]?.beats.map((b) => b.beamId) ?? [];
+    // the interval is 2 octaves → the beam breaks → no shared beam id
+    expect(ids.length).toBeGreaterThanOrEqual(2);
+    expect(ids[0] === -1 || ids[0] !== ids[1]).toBe(true);
+  });
+
+  it("breaks the beam where it would cross a notehead", () => {
+    const score = buildScore();
+    const bar = score.bars[0];
+    if (!bar) return;
+    const eighth = TICKS_PER_QUARTER / 2;
+    // contour positions (guitar-written): 5, -1, 5 — stems go down and the
+    // beam line sits right on the middle note's head (|0.8| < clearance)
+    const a: Note = { id: 610 as never, pitch: 67, string: 1, fret: 8, start: 0, duration: eighth, velocity: 100, articulations: [] };
+    const b: Note = { id: 611 as never, pitch: 57, string: 2, fret: 2, start: eighth, duration: eighth, velocity: 100, articulations: [] };
+    const c: Note = { id: 612 as never, pitch: 67, string: 1, fret: 8, start: 2 * eighth, duration: eighth, velocity: 100, articulations: [] };
+    const layout = computeLayout(
+      { ...score, bars: [{ ...bar, voices: [{ notes: [a, b, c] }] }] },
+      { width: 1200 },
+    );
+    const ids = layout.systems[0]?.bars[0]?.tracks[0]?.beats.map((x) => x.beamId) ?? [];
+    // a single beam across all three would collide with the middle head
+    const allTogether = ids[0] !== -1 && ids[0] === ids[1] && ids[1] === ids[2];
+    expect(allTogether).toBe(false);
+  });
+
   it("moves the playhead continuously across the barline", () => {
     const score = buildScore();
     const layout = computeLayout(score, { width: 1200 });
@@ -289,6 +327,22 @@ describe("positionAt", () => {
     if (!beat) return;
     const pos = positionAt(layout, beat.x, tb.staffTop + 2 * layout.staffSpace);
     expect(pos?.stringIndex).toBeNull();
+  });
+
+  it("interpolates the click tick between beat columns (rests stay writable)", () => {
+    const bar = layout.systems[0]?.bars[0];
+    const tb = bar?.tracks[0];
+    if (!bar || !tb) return;
+    const b0 = tb.beats[0];
+    const b1 = tb.beats[1];
+    if (!b0 || !b1) return;
+    const y = tb.tabTop + 2 * layout.tabLineGap;
+    // halfway between two eighth columns → the tick in between, not a column start
+    const mid = positionAt(layout, (b0.x + b1.x) / 2, y);
+    expect(mid?.tick).toBeGreaterThan(b0.start);
+    expect(mid?.tick).toBeLessThan(b1.start);
+    // exact column centers still map exactly
+    expect(positionAt(layout, b1.x, y)?.tick).toBe(b1.start);
   });
 });
 

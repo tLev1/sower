@@ -399,12 +399,18 @@ export function beamGroupSize(ts: { readonly numerator: number; readonly denomin
  * Assigns beam-group ids to runs of equal, short, non-rest beats that start
  * within the same metrical group slot (per the time signature's beam group
  * size). Rests and longer values break the run.
+ *
+ * Inside a run the beam is broken further per engraving standards
+ * (Gould, "Behind Bars"):
+ *  - between adjacent notes more than an octave apart
+ *  - wherever the beam would touch or cross a notehead
+ * Beats left alone by the breaks fall back to flags.
  */
 function assignBeamGroups(seeds: readonly BeatSeed[], groupTicks: number): number[] {
   const ids = seeds.map(() => -1);
   const EIGHTH = TICKS_PER_QUARTER / 2;
   const slotOf = (start: number): number => Math.floor(start / Math.max(groupTicks, 1));
-  let nextId = 0;
+  const runs: number[][] = [];
   let i = 0;
   while (i < seeds.length) {
     const seed = seeds[i];
@@ -423,15 +429,98 @@ function assignBeamGroups(seeds: readonly BeatSeed[], groupTicks: number): numbe
       j++;
     }
     if (j - i >= 2) {
-      for (let k = i; k < j; k++) {
-        const target = ids[k];
-        if (target !== undefined) ids[k] = nextId;
-      }
-      nextId++;
+      const run: number[] = [];
+      for (let k = i; k < j; k++) run.push(k);
+      runs.push(run);
     }
     i = Math.max(j, i + 1);
   }
+  let nextId = 0;
+  for (const run of runs) {
+    for (const sub of splitBeamRun(seeds, run)) {
+      if (sub.length >= 2) {
+        for (const k of sub) ids[k] = nextId;
+        nextId++;
+      }
+    }
+  }
   return ids;
+}
+
+/** Staff position of a note head — same convention as the engraver. */
+function noteStaffPos(note: Note): number {
+  const written = note.string !== null && note.fret !== null ? note.pitch + 12 : note.pitch;
+  return diatonicStep(written) - B4_STEP;
+}
+
+function beatExtremes(seed: BeatSeed): { min: number; max: number } {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const n of seed.notes) {
+    const p = noteStaffPos(n);
+    if (p < min) min = p;
+    if (p > max) max = p;
+  }
+  return { min, max };
+}
+
+/** More than an octave apart (in staff positions) → break. */
+const BEAM_BREAK_INTERVAL = 7;
+/** Head half-height + beam half-thickness + margin, in staff positions. */
+const BEAM_HEAD_CLEARANCE = 2.1;
+/** Stem tip distance from its head (engraving STEM_LEN = 3.4 spaces). */
+const BEAM_TIP_OFFSET = 6.8;
+
+/**
+ * Splits a beam run at the standard breaking points. Returns sub-runs of ≥1
+ * beats; sub-runs of a single beat are drawn with a flag instead of a beam.
+ */
+function splitBeamRun(seeds: readonly BeatSeed[], run: readonly number[]): number[][] {
+  if (run.length < 2) return [run.slice()];
+  for (let i = 1; i < run.length; i++) {
+    const segEnd = i;
+    // stem direction over the candidate segment 0..i (Gould's rule)
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (let k = 0; k <= segEnd; k++) {
+      const seed = seeds[run[k] ?? -1];
+      if (!seed) continue;
+      const ex = beatExtremes(seed);
+      if (ex.min < min) min = ex.min;
+      if (ex.max > max) max = ex.max;
+    }
+    const stemUp = -min >= max;
+    const attach = (seed: BeatSeed): number => {
+      const ex = beatExtremes(seed);
+      return stemUp ? ex.min : ex.max;
+    };
+    const seedA = seeds[run[i - 1] ?? -1];
+    const seedB = seeds[run[i] ?? -1];
+    if (!seedA || !seedB) break;
+    // rule 1: adjacent notes more than an octave apart
+    if (Math.abs(attach(seedA) - attach(seedB)) > BEAM_BREAK_INTERVAL) {
+      return [...splitBeamRun(seeds, run.slice(0, i)), ...splitBeamRun(seeds, run.slice(i))];
+    }
+    // rule 2: the straight beam line (first → last stem tip) must not touch
+    // any notehead in between
+    const tip = (seed: BeatSeed): number => attach(seed) + (stemUp ? BEAM_TIP_OFFSET : -BEAM_TIP_OFFSET);
+    const first = seeds[run[0] ?? -1];
+    const last = seeds[run[segEnd] ?? -1];
+    if (!first || !last) break;
+    const tip0 = tip(first);
+    const tipN = tip(last);
+    for (let j = 1; j < segEnd; j++) {
+      const mid = seeds[run[j] ?? -1];
+      if (!mid) continue;
+      const linePos = tip0 + ((tipN - tip0) * j) / segEnd;
+      for (const n of mid.notes) {
+        if (Math.abs(linePos - noteStaffPos(n)) < BEAM_HEAD_CLEARANCE) {
+          return [...splitBeamRun(seeds, run.slice(0, j)), ...splitBeamRun(seeds, run.slice(j))];
+        }
+      }
+    }
+  }
+  return [run.slice()];
 }
 
 /**
@@ -713,14 +802,35 @@ export function positionAt(layout: LayoutDocument, x: number, y: number): Clicke
   const trackBar = bar.tracks[0];
   const capacity = ticksPerBar(bar.bar.timeSignature);
 
+  // tick = piecewise-linear inverse of xAtTick: the exact rhythmic position
+  // under the cursor (derived rest columns span wide gaps — snapping to
+  // their starts made those regions unwritable)
   let tick = 0;
   const beats = trackBar?.beats ?? [];
-  if (beats.length > 0 && beats[0]) {
-    let nearest = beats[0];
-    for (const b of beats) {
-      if (Math.abs(b.x - x) < Math.abs(nearest.x - x)) nearest = b;
+  const first = beats[0];
+  const last = beats[beats.length - 1];
+  if (first && last) {
+    const tailX = Math.min(bar.x1 - 4, last.x);
+    if (x <= first.x) {
+      tick = first.start;
+    } else if (x >= tailX && tailX > last.x) {
+      // beyond the last column: interpolate toward the bar end (barline)
+      const t = Math.min(1, (x - last.x) / Math.max(tailX - last.x, 1));
+      tick = last.start + t * Math.max(0, capacity - last.start);
+    } else {
+      tick = last.start;
+      for (let i = 0; i < beats.length - 1; i++) {
+        const a = beats[i];
+        const b = beats[i + 1];
+        if (a && b && x >= a.x && x <= b.x) {
+          const span = b.x - a.x;
+          const t = span > 0 ? (x - a.x) / span : 0;
+          tick = a.start + t * (b.start - a.start);
+          break;
+        }
+      }
     }
-    tick = Math.min(Math.max(0, nearest.start), Math.max(0, capacity - TICKS_PER_QUARTER / 8));
+    tick = Math.min(Math.max(0, tick), Math.max(0, capacity - 60));
   }
 
   let stringIndex: number | null = null;

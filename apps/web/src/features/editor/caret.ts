@@ -93,8 +93,23 @@ export function openStringPitch(score: Score, stringIndex: number, trackIndex = 
 }
 
 export function moveCaretHorizontally(score: Score, caret: Caret, steps: number): Caret {
+  return moveCaretByTicks(score, caret, steps * GRID_TICKS, GRID_TICKS);
+}
+
+/**
+ * Moves the caret by an exact tick amount (the entry note value) — the
+ * cursor follows the selected duration so consecutive values sit side by
+ * side (four 16ths advance 120 ticks each) and beam together. At the end of
+ * the score it clamps to the last position where `stepTicks` still fits.
+ */
+export function moveCaretByTicks(
+  score: Score,
+  caret: Caret,
+  deltaTicks: number,
+  stepTicks: number = Math.abs(deltaTicks) || GRID_TICKS,
+): Caret {
   let barIndex = caret.barIndex;
-  let tick = caret.tick + steps * GRID_TICKS;
+  let tick = caret.tick + deltaTicks;
   while (tick < 0) {
     if (barIndex === 0) {
       tick = 0;
@@ -105,7 +120,8 @@ export function moveCaretHorizontally(score: Score, caret: Caret, steps: number)
   }
   while (tick >= capacityOf(score, barIndex)) {
     if (barIndex === barCount(score) - 1) {
-      tick = capacityOf(score, barIndex) - GRID_TICKS;
+      const step = Math.min(Math.abs(stepTicks) || GRID_TICKS, capacityOf(score, barIndex));
+      tick = Math.max(0, capacityOf(score, barIndex) - step);
       break;
     }
     tick -= capacityOf(score, barIndex);

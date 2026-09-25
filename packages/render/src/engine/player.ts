@@ -820,8 +820,11 @@ export class WebAudioPlayer implements ScorePlayer {
     }
     events.sort((a, b) => a.sec + a.strum - (b.sec + b.strum));
     this.events = events;
-    const last = events[events.length - 1];
-    this.totalSec = last ? last.sec + last.durSec + 0.35 : 0.001;
+    // playback runs to the END OF THE LAST MEASURE (rests count — the
+    // metronome must click every beat of the bar, not stop at the last note)
+    const lastBar = barSeconds.length - 1;
+    const barEnd = (barStarts[lastBar] ?? 0) + (barSeconds[lastBar] ?? 0);
+    this.totalSec = barEnd > 0 ? barEnd + 0.35 : 0.001;
   }
 }
 

@@ -5,6 +5,7 @@ import {
   GRID_TICKS,
   capacityOf,
   createCaret,
+  moveCaretByTicks,
   moveCaretHorizontally,
   moveCaretVertically,
   noteAt,
@@ -64,10 +65,29 @@ describe("caret navigation", () => {
   });
 
   it("clamps at the very end of the score", () => {
-    const score = makeScore(1);
-    const nearEnd = { barIndex: 0, stringIndex: 0, tick: capacityOf(score, 0) - GRID_TICKS };
-    const caret = moveCaretHorizontally(score, nearEnd, 5);
-    expect(caret.tick).toBe(capacityOf(score, 0) - GRID_TICKS);
+    const score = makeScore();
+    const end = { barIndex: 1, stringIndex: 0, tick: 1680 };
+    const next = moveCaretHorizontally(score, end, 5);
+    expect(next.tick).toBe(1680);
+  });
+
+  it("moves by exact note-value ticks (16ths land side by side)", () => {
+    const score = makeScore();
+    const start = { barIndex: 0, stringIndex: 0, tick: 0 };
+    let c = moveCaretByTicks(score, start, 120); // a 16th
+    expect(c.tick).toBe(120);
+    c = moveCaretByTicks(score, c, 120);
+    expect(c.tick).toBe(240);
+    c = moveCaretByTicks(score, c, 360); // dotted eighth step
+    expect(c.tick).toBe(600);
+  });
+
+  it("wraps exact tick moves across bars", () => {
+    const score = makeScore();
+    const nearEnd = { barIndex: 0, stringIndex: 0, tick: 1800 };
+    const c = moveCaretByTicks(score, nearEnd, 240);
+    expect(c.barIndex).toBe(1);
+    expect(c.tick).toBe(120);
   });
 
   it("up arrow moves to a higher string (lower visual index)", () => {

@@ -4,12 +4,11 @@ import { TICKS_PER_QUARTER, tempoMarkAt } from "@stdbd/core";
 import type { StdbdEngine } from "@stdbd/render";
 import type { ClickedPosition } from "@stdbd/render";
 import {
-  GRID_TICKS,
   MAX_FRET,
   capacityOf,
   createCaret,
   durationTicks,
-  moveCaretHorizontally,
+  moveCaretByTicks,
   moveCaretVertically,
   noteAt,
   openStringPitch,
@@ -86,6 +85,12 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
   const entryDurationRef = useRef(entryDuration);
   entryDurationRef.current = entryDuration;
 
+  /** Caret step = the selected note value (16ths step by 120 ticks). */
+  const entryGridTicks = (): number => {
+    const chosen = entryDurationRef.current;
+    return durationTicks(chosen.value, chosen.dotted);
+  };
+
   useEffect(() => doc.subscribe(() => { setVersion((v) => v + 1); }), [doc]);
 
   const score = doc.score;
@@ -115,7 +120,7 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
       // chord tones added to an existing beat inherit the beat's duration
       const duration = existing
         ? existing.duration
-        : Math.max(GRID_TICKS / 2, Math.min(
+        : Math.max(60, Math.min(
             beatNote ? beatNote.duration : durationTicks(chosen.value, chosen.dotted),
             capacity - c.tick,
           ));
@@ -145,8 +150,9 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
         });
       }
       lastPlacedRef.current = { tick: c.tick, stringIndex: c.stringIndex };
-      // riff entry: a newly created beat auto-advances by its length; chord tones stay
-      setCaret(beatNote ? c : moveCaretHorizontally(s, c, Math.max(1, Math.round(duration / GRID_TICKS))));
+      // riff entry: a new beat advances by exactly its duration (16ths land
+      // side by side and beam together); chord tones stay put
+      setCaret(beatNote ? c : moveCaretByTicks(s, c, duration));
       return "applied";
     },
     [doc, execute],
@@ -176,6 +182,39 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     [doc, execute],
   );
 
+  /**
+   * Note length from the score's context menu: sets the entry duration for
+   * notes written from that point on — and, when a written note sits at the
+   * clicked position, changes THAT note only (never the notes after it; the
+   * measure simply re-lays out around the new length).
+   */
+  const applyNoteLength = useCallback(
+    (barIndex: number, tick: number, stringIndex: number | null, value: DurationValue, dotted: boolean): void => {
+      setEntryDurationState({ value, dotted });
+      const s = doc.score;
+      const bar = s.bars[barIndex];
+      const track = s.tracks[0];
+      if (!bar || !track) return;
+      const existing = bar.voices[0]?.notes.find(
+        (n) => n.start === tick && (stringIndex === null || n.string === stringIndex),
+      );
+      if (!existing) return;
+      const capacity = capacityOf(s, barIndex);
+      const duration = Math.min(
+        durationTicks(value, dotted),
+        Math.max(60, capacity - existing.start),
+      );
+      execute({
+        type: "setNoteDuration",
+        trackId: track.id,
+        barId: bar.id,
+        noteId: existing.id,
+        duration,
+      });
+    },
+    [doc, execute],
+  );
+
   const deleteAtCaret = useCallback((): EditResult => {
     const s = doc.score;
     const c = caretRef.current;
@@ -193,11 +232,11 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
       });
       return "applied";
     }
-    if (c.tick > 0 || c.barIndex > 0) {
-      setCaret(moveCaretHorizontally(s, c, -1));
-      return "applied";
-    }
-    return "clamped";
+      if (c.tick > 0 || c.barIndex > 0) {
+        setCaret(moveCaretByTicks(s, c, -entryGridTicks()));
+        return "applied";
+      }
+      return "clamped";
   }, [doc, execute]);
 
   const navigate = useCallback(
@@ -206,7 +245,7 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
       setCaret((c) => {
         if (dx !== 0) {
           lastPlacedRef.current = null;
-          return moveCaretHorizontally(s, c, dx);
+          return moveCaretByTicks(s, c, dx * entryGridTicks());
         }
         // vertical: after a placement, return to the placed tick (chord mode)
         const tick = lastPlacedRef.current?.tick ?? c.tick;
@@ -393,9 +432,12 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
       const s = doc.score;
       const barIndex = Math.min(position.barIndex, Math.max(0, s.bars.length - 1));
       const capacity = capacityOf(s, barIndex);
+      // snap to the SELECTED note value's grid — a 16th entry can land on
+      // any 16th of the measure (the measure is freely writable)
+      const grid = Math.max(60, entryGridTicks());
       const tick = Math.min(
-        Math.max(0, Math.round(position.tick / GRID_TICKS) * GRID_TICKS),
-        capacity - GRID_TICKS,
+        Math.max(0, Math.round(position.tick / grid) * grid),
+        Math.max(0, capacity - Math.min(grid, capacity)),
       );
       const maxString = stringCount(s) - 1;
       const stringIndex =
@@ -419,20 +461,23 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     setCaret((c) => {
       const s = doc.score;
       const barIndex = Math.min(c.barIndex, Math.max(0, s.bars.length - 1));
-      const tick = Math.min(c.tick, Math.max(0, capacityOf(s, barIndex) - GRID_TICKS));
+      const capacity = capacityOf(s, barIndex);
+      const grid = Math.min(Math.max(60, entryGridTicks()), capacity);
+      const tick = Math.min(c.tick, Math.max(0, capacity - grid));
       return { ...c, barIndex, tick };
     });
   }, [doc, version]);
 
   const caretInfo = useMemo(() => {
     const bar = score.bars[caret.barIndex];
-    const gridStep = bar ? caret.tick / GRID_TICKS : 0;
+    const grid = Math.max(60, durationTicks(entryDuration.value, entryDuration.dotted));
+    const gridStep = bar ? caret.tick / grid : 0;
     return {
       bar: caret.barIndex + 1,
       string: caret.stringIndex + 1,
       step: Math.round(gridStep) + 1,
     };
-  }, [score, caret]);
+  }, [score, caret, entryDuration]);
 
   return {
     score,
@@ -445,6 +490,7 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     setContainer,
     placeFret,
     setEntryDuration,
+    applyNoteLength,
     deleteAtCaret,
     navigate,
     undo,
