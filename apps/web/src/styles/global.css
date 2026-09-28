@@ -328,6 +328,130 @@ body {
   color: #fff;
 }
 
+/* ---------- hum / sing input ---------- */
+
+.hum-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hum-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hum-btn.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.hum-btn.on:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.hum-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: background 140ms var(--ease-out);
+}
+
+.hum-btn.on .hum-dot {
+  background: #fff;
+  animation: hum-pulse 1.2s var(--ease-out) infinite;
+}
+
+@keyframes hum-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.hum-modes {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.hum-mode {
+  height: 22px;
+  padding: 0 9px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 120ms var(--ease-out),
+    color 120ms var(--ease-out);
+}
+
+.hum-mode:hover {
+  color: var(--text);
+}
+
+.hum-mode.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.hum-live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hum-level {
+  width: 64px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.hum-level-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 60ms linear;
+}
+
+.hum-pitch {
+  min-width: 34px;
+  font-family: "JetBrains Mono Variable", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hum-count {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.hum-message {
+  color: var(--warning, #f5a623);
+  font-size: 11px;
+}
+
 /* ---------- entry note-value palette ---------- */
 
 .duration-picker {

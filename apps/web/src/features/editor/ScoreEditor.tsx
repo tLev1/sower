@@ -2,15 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { openStringPitch, type Caret } from "./caret";
 import { DurationPicker } from "./DurationPicker";
 import { SheetMenu, type SheetMenuState } from "./SheetMenu";
+import { HumControls } from "../input/HumControls";
+import { useHumInput } from "../input/useHumInput";
 import type { useEditor } from "./useEditor";
 import type { SowerEngine } from "@sower/render";
-import type { Score } from "@sower/core";
+import type { Score, ScoreDocument } from "@sower/core";
 
 interface ScoreEditorProps {
   score: Score;
   caret: Caret;
   editor: ReturnType<typeof useEditor>;
   renderer: SowerEngine | null;
+  doc: ScoreDocument;
 }
 
 /**
@@ -20,8 +23,9 @@ interface ScoreEditorProps {
  * the tempo/meter popovers; right-click (desktop) or long-press (touch)
  * opens the score context menu.
  */
-export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps) {
+export function ScoreEditor({ score, caret, editor, renderer, doc }: ScoreEditorProps) {
   const [menu, setMenu] = useState<SheetMenuState | null>(null);
+  const hum = useHumInput({ document: doc, editor });
 
   // re-render whenever the document changes
   useEffect(() => {
@@ -106,8 +110,20 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
           dotted={editor.entryDuration.dotted}
           onSelect={editor.setEntryDuration}
         />
+        <HumControls
+          state={hum.state}
+          mode={hum.mode}
+          level={hum.level}
+          heard={hum.heard}
+          previewCount={hum.previewCount}
+          isListening={hum.isListening}
+          supported={hum.supported}
+          onToggle={hum.toggle}
+          onModeChange={hum.setMode}
+        />
         <span className="hint">
-          Click a beat · B writes rests · 0-9 frets · value palette sets note length · Right-click/long-press for
+          Click a beat · B writes rests · 0-9 frets · value palette sets note length · drag a note to
+          re-pitch, drag its right edge to resize · Hum sings corrections · Right-click/long-press for
           tempo, meter & measures · Ctrl+Z undo · Space play
         </span>
         <span className="strings">

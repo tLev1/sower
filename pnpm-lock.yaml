@@ -237,6 +237,9 @@ importers:
       typescript:
         specifier: ~5.9.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.7(lightningcss@1.33.0)(supports-color@7.2.0)
 
   packages/core:
     devDependencies:

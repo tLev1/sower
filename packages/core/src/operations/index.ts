@@ -1,6 +1,8 @@
 export {
+  barStartTick,
   barStartTime,
   createIdAllocator,
+  locateTick,
   quarterBpmOf,
   tempoAtBar,
   tempoMarkAt,
@@ -32,3 +34,5 @@ export {
   snapDuration,
 } from "./fingering.js";
 export type { Fingering } from "./fingering.js";
+export { humCorrectionPitch, quantizeHumNotes } from "./hum.js";
+export type { HumNoteTiming, HumQuantizeOptions, QuantizedNote } from "./hum.js";

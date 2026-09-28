@@ -90,6 +90,7 @@ export function App() {
           caret={editor.caret}
           editor={editor}
           renderer={renderer}
+          doc={doc}
         />
       </main>
     </div>

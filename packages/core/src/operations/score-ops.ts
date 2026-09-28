@@ -108,6 +108,38 @@ export function barStartTime(score: Score, barIndex: number): number {
   return seconds;
 }
 
+/** Absolute tick at the start of `barIndex` (the score-wide tick timeline). */
+export function barStartTick(score: Score, barIndex: number): number {
+  let acc = 0;
+  for (let i = 0; i < barIndex && i < score.bars.length; i++) {
+    const bar = score.bars[i];
+    if (bar) acc += ticksPerBar(bar.timeSignature);
+  }
+  return acc;
+}
+
+/**
+ * Locates an absolute tick as (bar index, tick within that bar). Ticks past
+ * the end of the score clamp to the last position; negative ticks clamp to 0.
+ */
+export function locateTick(score: Score, absTick: number): { barIndex: number; tick: number } {
+  if (score.bars.length === 0) return { barIndex: 0, tick: 0 };
+  let remaining = Math.max(0, absTick);
+  for (let i = 0; i < score.bars.length; i++) {
+    const bar = score.bars[i];
+    if (!bar) continue;
+    const capacity = ticksPerBar(bar.timeSignature);
+    if (remaining < capacity) return { barIndex: i, tick: remaining };
+    remaining -= capacity;
+  }
+  const lastIndex = score.bars.length - 1;
+  const last = score.bars[lastIndex];
+  return {
+    barIndex: lastIndex,
+    tick: Math.max(0, (last ? ticksPerBar(last.timeSignature) : 0) - 1),
+  };
+}
+
 export function validateBar(bar: Bar): string[] {
   const errors: string[] = [];
   const capacity = ticksPerBar(bar.timeSignature);
