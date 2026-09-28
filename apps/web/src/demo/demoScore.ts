@@ -69,7 +69,7 @@ export function buildDemoScore(): Score {
 
   return {
     title: "Em Pentatonic Warmup",
-    artist: "Sower demo",
+    artist: "",
     tracks: [
       {
         id: 1 as never,

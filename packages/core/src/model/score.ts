@@ -94,6 +94,8 @@ export interface Bar {
    * 480 = ♩=bpm). null/undefined = quarter note (legacy scores default here).
    */
   readonly tempoUnit?: number | null;
+  /** Lead-sheet chord symbol engraved above this measure ("Dmaj7", "Bm7"…). */
+  readonly chordSymbol?: string | null;
   readonly voices: readonly Voice[];
 }
 

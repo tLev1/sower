@@ -61,6 +61,17 @@
       advance, value-grid snapping); mixed values beam correctly
 - [x] Rest entry — `B` writes a rest of the selected value (configurable via
       the same palette + dot), editable like notes, measure auto-adjusts
+- [x] Editing written notes — changing a note's length re-adjusts the
+      measure with standard rests (only that note changes); Del removes the
+      whole beat group (all strings); Backspace/Del on rest time removes the
+      rest and pulls the following notes into place
+- [x] Key signature editing — right-click "Key signature…" (15 keys ×
+      major/minor), engraved at the change measure with a double barline,
+      drives accidentals + chord spelling (standard notation)
+- [x] Chord sheets — right-click "Add chord…": key-aware diatonic map +
+      full chord map (Berklee symbol convention), N-measure span, lead-sheet
+      symbol above the staff + playable guitar voicing in tab/notation
+- [x] Editable score title + author (click the header)
 - [ ] Triplets / tuplet entry (3:2 etc.) — needs a tuplet model + entry mode
 - [x] Simple articulations — palm mute ("P.M." above the staff), staccato
       (dot), accent, ghost (parenthesized frets), let-ring: toggle on the
@@ -76,12 +87,16 @@
 ### Phase 1c — Flagship UX (~4 wks, prototype FIRST within this phase)
 - [ ] Direct note manipulation: drag pitch (vertical), drag duration edge (horizontal), snap
 - [ ] Hum/sing/play correction input (monophonic pitch detection, WASM)
+- [ ] Keyboard shortcuts configuration page — let the user rebind every
+      shortcut to taste (e.g. Shift+digit instead of Ctrl+digit for frets
+      10-24, any key for rests/articulations); all future shortcuts register
+      there too
 - [ ] Micro-interaction polish pass against "premium feel" checklist
 
 ### Phase 2 — Product base (~3 wks)
 - [ ] Accounts + cloud sync (Clerk/Supabase), free/Pro tiers, Stripe
 - [ ] Onboarding, sample songs, empty states
-- [ ] Practice tools: loop section, tempo %, metronome, tuner
+- [ ] Practice tools: loop section, tempo %, tuner (metronome shipped)
 - [ ] Playback v2 groundwork: per-track mixer (Track model already has
       volume/pan/mute/solo), premium sample engine seam
 
@@ -105,6 +120,19 @@
 - [ ] Education layer, creator marketplace, licensed catalog
 - [ ] Collaboration, version branching ("as played" vs "studio" takes)
 - [ ] Desktop (Tauri) + iPad shells
+
+## MuseScore parity track (target feature set)
+
+Sower targets MuseScore-level notation depth around its guitar/tab core.
+The complete target is inventoried in `Features.md` ("To be implemented"),
+grouped exactly like the MuseScore Studio Handbook chapters (score setup &
+navigation, note input, rhythm/meter/measures, pitch, expressive markings,
+repeats & structure, idiomatic guitar notation, text & lyrics, layout,
+sound & playback, file & interchange, app platform). All notation geometry
+follows the *Essential Dictionary of Music Notation* (see handover rule #0).
+Work is pulled from that list into the phases below as capacity allows —
+first up: tuplets, manual beaming/stems, repeats & voltas, dynamics +
+slurs/ties, lyrics, and the import/export trio (MusicXML, MIDI, GP).
 
 ## Monetization model (agreed)
 - Freemium subscription ($8-12/mo, $60-90/yr) + lifetime tier

@@ -459,7 +459,7 @@ export class SowerEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
       for (const listener of [...this.appendBarListeners]) listener();
     } else if (action === "remove-bar") {
       for (const listener of [...this.removeBarListeners]) listener();
-    } else if (action === "edit-time-sig" || action === "edit-tempo") {
+    } else if (action === "edit-time-sig" || action === "edit-tempo" || action === "edit-title" || action === "edit-author") {
       const barIndex = Number(actionEl.getAttribute("data-bar") ?? "0");
       if (!Number.isFinite(barIndex)) return;
       const click: SheetMarkerClick = {

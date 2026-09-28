@@ -13,6 +13,11 @@ export type {
   SetTimeSignature,
   SetTrackInstrument,
   ToggleNoteArticulation,
+  SetScoreMeta,
+  SetKeySignature,
+  AddChord,
+  RemoveBeat,
+  RemoveRange,
 } from "./commands.js";
 export { ScoreDocument } from "./score-document.js";
 export type { ScoreDocumentOptions } from "./score-document.js";

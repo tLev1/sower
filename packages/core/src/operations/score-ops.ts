@@ -60,6 +60,20 @@ export function tempoUnitOf(bar: Bar): number {
   return bar.tempoUnit ?? TICKS_PER_QUARTER;
 }
 
+/** The key signature in force at a bar (propagated from key-change markers). */
+export function keyAtBar(score: Score, barIndex: number): { fifths: number; mode: "major" | "minor" } {
+  let fifths = 0;
+  let mode: "major" | "minor" = "major";
+  for (let i = 0; i <= barIndex && i < score.bars.length; i++) {
+    const kc = score.bars[i]?.keyChange;
+    if (kc) {
+      fifths = kc.fifths;
+      mode = kc.mode;
+    }
+  }
+  return { fifths, mode };
+}
+
 /** Nearest tempo marker at or before `barIndex`, or null when none exists. */
 export function tempoMarkAt(score: Score, barIndex: number): TempoMark | null {
   let mark: TempoMark | null = null;

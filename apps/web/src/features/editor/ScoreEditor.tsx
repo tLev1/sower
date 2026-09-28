@@ -54,8 +54,14 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
   useEffect(() => {
     if (!renderer) return;
     const offMarker = renderer.onSheetMarkerClicked((click) => {
+      const kind =
+        click.action === "edit-tempo"
+          ? "tempo"
+          : click.action === "edit-title" || click.action === "edit-author"
+            ? "meta"
+            : "timesig";
       setMenu({
-        kind: click.action === "edit-tempo" ? "tempo" : "timesig",
+        kind,
         barIndex: click.barIndex,
         x: click.clientX,
         y: click.clientY,
@@ -126,6 +132,9 @@ export function ScoreEditor({ score, caret, editor, renderer }: ScoreEditorProps
           }
           onInsertMeasure={editor.insertBarAfter}
           onDeleteMeasure={(barIndex) => editor.removeBarAt(barIndex)}
+          onScoreMeta={editor.setScoreMeta}
+          onKeyChange={editor.setKeySignatureAtBar}
+          onAddChord={editor.addChordAtBar}
         />
       ) : null}
     </div>

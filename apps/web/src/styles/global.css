@@ -659,6 +659,56 @@ body {
   background: var(--accent-hover);
 }
 
+/* meta / key / chord popovers */
+
+.meta-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sheet-popover-input.wide {
+  width: 170px;
+}
+
+.sheet-popover-input.narrow {
+  width: 48px;
+}
+
+.key-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.chord-diatonic {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.chord-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chord-row .sheet-popover-select {
+  width: 84px;
+}
+
+.chord-row .sheet-popover-select.wide {
+  width: 96px;
+}
+
+.chord-row select[aria-label="Chord inversion and position"] {
+  width: 128px;
+}
+
 /* clickable marks on the sheet */
 
 .stdb-score-overlay .stdb-marker-hit {

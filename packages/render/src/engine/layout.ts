@@ -12,7 +12,7 @@ export const STAFF_SPACE = 10;
 /** Measures per system row — the 5th measure wraps to a new line. */
 export const BARS_PER_SYSTEM = 4;
 /** Vertical distance between two tablature string lines, in CSS pixels. */
-export const TAB_LINE_GAP = 9;
+export const TAB_LINE_GAP = 12;
 
 export interface Rect {
   readonly x: number;
@@ -60,6 +60,16 @@ export interface TrackBar {
   readonly stringCount: number;
 }
 
+/** A key-signature change engraved mid-system (key sigs follow the manual:
+ *  accidental slots per letter octave, cancellation naturals when going to
+ *  a signature with no sharps/flats). */
+export interface KeyChangeMarker {
+  readonly fifths: number;
+  readonly mode: "major" | "minor";
+  /** The key being replaced (drives cancellation naturals). */
+  readonly prevFifths: number;
+}
+
 /** One logical bar as laid out inside a system. */
 export interface BarBox {
   readonly index: number;
@@ -72,6 +82,8 @@ export interface BarBox {
   readonly timeSignature: { readonly numerator: number; readonly denominator: number } | null;
   /** True when this bar opens a NEW meter mid-system (gets a double barline). */
   readonly timeSignatureChange: boolean;
+  /** Key-signature change engraved at this mid-system bar (double barline). */
+  readonly keyChangeAt: KeyChangeMarker | null;
   /** Key fifths drawn at this bar's start (only when displayed). */
   readonly keyFifths: number | null;
   /** Key fifths in effect for this bar (accidental logic). */
@@ -402,10 +414,12 @@ function trackLayouts(score: Score, tabGap: number): TrackLayout[] {
     const overUp = notation && maxPos > 4 ? (maxPos - 4) * (STAFF_SPACE / 2) : 0;
     const overDown = notation && minPos < -4 ? (-4 - minPos) * (STAFF_SPACE / 2) : 0;
     const staffTopOffset = overUp;
-    const tabTopOffset = overUp + STAFF_SPACE * 4 + overDown + STAFF_SPACE * 2.1;
+    // the notation and tab staves keep a comfortable distance so noteheads,
+  // ledger lines and tab numbers never overlap between the staves
+  const tabTopOffset = overUp + STAFF_SPACE * 4 + overDown + STAFF_SPACE * 3.8;
 
     let blockHeight = 0;
-    if (notation) blockHeight += staffTopOffset + STAFF_SPACE * 4 + overDown + STAFF_SPACE * 2.1;
+    if (notation) blockHeight += staffTopOffset + STAFF_SPACE * 4 + overDown + STAFF_SPACE * 3.8;
     if (tab) blockHeight += Math.max(strings - 1, 0) * tabGap + STAFF_SPACE * 2.7;
     return {
       track,
@@ -595,8 +609,10 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
 
   // Effective key signature per bar (carries forward).
   const fifthsPerBar: number[] = [];
+  const modePerBar: ("major" | "minor")[] = [];
   score.bars.forEach((bar, i) => {
     fifthsPerBar.push(bar.keyChange?.fifths ?? fifthsPerBar[i - 1] ?? 0);
+    modePerBar.push(bar.keyChange?.mode ?? modePerBar[i - 1] ?? "major");
   });
 
   // Beat seeds per (bar, track) with proportional widths.
@@ -642,6 +658,25 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
     return staffSpace * (1.1 + 2.0 * digits + 0.9);
   };
 
+  /** A key marker that actually CHANGES the key is a mid-system key change. */
+  const keyChangeAt = (i: number): KeyChangeMarker | null => {
+    const bar = score.bars[i];
+    if (i === 0 || !bar?.keyChange) return null;
+    const prevFifths = fifthsPerBar[i - 1] ?? 0;
+    const changed =
+      (fifthsPerBar[i] ?? 0) !== prevFifths ||
+      (modePerBar[i] ?? "major") !== (modePerBar[i - 1] ?? "major");
+    return changed ? { ...bar.keyChange, prevFifths } : null;
+  };
+
+  /** Extra width mid-system change bars need (key accidentals + time block). */
+  const midChangeLead = (i: number): number => {
+    const kc = keyChangeAt(i);
+    const count = kc ? (kc.fifths === 0 ? Math.abs(kc.prevFifths) : Math.abs(kc.fifths)) : 0;
+    const keyLead = kc ? staffSpace * (1.0 + count * 0.95 + 0.4) : 0;
+    return keyLead + (showTimeAt(i) ? timeChangeLead(i) : 0);
+  };
+
   // --- Pass 1: fixed 4 measures per system (measure 5 starts a new line). ---
   const groups: number[][] = [];
   for (let i = 0; i < score.bars.length; i += BARS_PER_SYSTEM) {
@@ -682,14 +717,14 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
       showTimeAt(firstBarIndex),
       staffSpace,
     );
-    const widths = barIndexes.map((bi, k) => {
-      const base = Math.max(baseWidths[bi] ?? 0, minBarWidth);
-      return base + (k > 0 && showTimeAt(bi) ? timeChangeLead(bi) : 0);
-    });
+    // per-bar lead: system header on the opening bar, change blocks mid-system
+    const leads = barIndexes.map((bi, k) => (k === 0 ? lead : midChangeLead(bi)));
+    const widths = barIndexes.map((bi) => Math.max(baseWidths[bi] ?? 0, minBarWidth));
     const totalContent = widths.reduce((a, b) => a + b, 0);
     // the last system leaves room after the final barline for the +/− controls
     const tailReserve = s === groups.length - 1 ? staffSpace * 6.6 : 0;
-    const available = contentWidth - lead - tailReserve;
+    const leadTotal = leads.reduce((a, b) => a + b, 0);
+    const available = contentWidth - leadTotal - tailReserve;
     // no scale floor: every system fits the page width exactly (100% fit)
     const scale = totalContent > 0 ? Math.max(available / totalContent, 0) : 1;
     const stretched = widths.map((w) => w * scale);
@@ -702,7 +737,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
       const bar = score.bars[bi];
       if (!bar) continue;
       const x0 = xCursor;
-      const barLead = k === 0 ? lead : showTimeAt(bi) ? timeChangeLead(bi) : 0;
+      const barLead = leads[k] ?? 0;
       const contentX = x0 + barLead;
       const innerW = stretched[k] ?? 0;
       const x1 = contentX + innerW;
@@ -750,6 +785,7 @@ export function computeLayout(score: Score, params: LayoutParams): LayoutDocumen
         x1,
         timeSignature: showTime ? bar.timeSignature : null,
         timeSignatureChange: showTime && k > 0,
+        keyChangeAt: k === 0 ? null : keyChangeAt(bi),
         keyFifths: k === 0 ? (fifthsPerBar[bi] ?? 0) : null,
         fifths: fifthsPerBar[bi] ?? 0,
         tracks: trackBars,

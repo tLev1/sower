@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ScoreDocument } from "@sower/core";
-import { TICKS_PER_QUARTER, tempoMarkAt } from "@sower/core";
+import { TICKS_PER_QUARTER, chordSymbol, keyAtBar, tempoMarkAt, type ChordQuality, type VoicedNote } from "@sower/core";
 import type { SowerEngine } from "@sower/render";
 import type { ClickedPosition } from "@sower/render";
 import {
@@ -274,6 +274,50 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     [doc, execute],
   );
 
+  /**
+   * Deletes the rest under the caret — a written rest or the auto-filled gap
+   * around it — and pulls the rest of the measure earlier by its length
+   * ("delete the rest and the next notes move into place").
+   */
+  const deleteRestAtCaret = useCallback((): EditResult => {
+    const s = doc.score;
+    const c = caretRef.current;
+    const bar = s.bars[c.barIndex];
+    const track = s.tracks[0];
+    const voice = bar?.voices[0];
+    if (!bar || !track || !voice) return "ignored";
+    // only pure rest time can be removed — a sounding note owns this tick
+    const covering = voice.notes.find((n) => n.start <= c.tick && c.tick < n.start + n.duration);
+    if (covering) return "clamped";
+    const written = restCovering(bar, c.tick);
+    let start: number;
+    let duration: number;
+    if (written) {
+      start = written.start;
+      duration = written.duration;
+    } else {
+      // the auto-filled gap around the caret: from the previous event's end
+      // to the next event's start
+      let prevEnd = 0;
+      let nextStart = capacityOf(s, c.barIndex);
+      for (const n of voice.notes) {
+        const end = n.start + n.duration;
+        if (end <= c.tick && end > prevEnd) prevEnd = end;
+        if (n.start > c.tick && n.start < nextStart) nextStart = n.start;
+      }
+      for (const r of voice.rests ?? []) {
+        const end = r.start + r.duration;
+        if (end <= c.tick && end > prevEnd) prevEnd = end;
+        if (r.start > c.tick && r.start < nextStart) nextStart = r.start;
+      }
+      start = prevEnd;
+      duration = nextStart - prevEnd;
+    }
+    if (duration < 60) return "clamped";
+    execute({ type: "removeRange", trackId: track.id, barId: bar.id, start, duration });
+    return "applied";
+  }, [doc, execute]);
+
   const deleteAtCaret = useCallback((): EditResult => {
     const s = doc.score;
     const c = caretRef.current;
@@ -281,7 +325,8 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     const track = s.tracks[0];
     if (!bar || !track) return "ignored";
 
-    const existing = noteAt(s, c);
+    // Backspace: the note on the current string at the caret
+    const existing = noteAt(s, c) ?? noteUnderCaret(s, c);
     if (existing) {
       execute({
         type: "removeNote",
@@ -291,12 +336,25 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
       });
       return "applied";
     }
-      if (c.tick > 0 || c.barIndex > 0) {
-        setCaret(moveCaretByTicks(s, c, -entryGridTicks()));
-        return "applied";
-      }
-      return "clamped";
-  }, [doc, execute]);
+    // no note here → the written/auto rest under the caret goes away and the
+    // rest of the measure is pulled into place
+    return deleteRestAtCaret();
+  }, [doc, execute, deleteRestAtCaret]);
+
+  /** Del: the whole beat group at the caret (notes on every string). */
+  const deleteBeatAtCaret = useCallback((): EditResult => {
+    const s = doc.score;
+    const c = caretRef.current;
+    const bar = s.bars[c.barIndex];
+    const track = s.tracks[0];
+    if (!bar || !track) return "ignored";
+    const hasColumn = (bar.voices[0]?.notes ?? []).some((n) => n.start === c.tick);
+    if (hasColumn) {
+      execute({ type: "removeBeat", trackId: track.id, barId: bar.id, start: c.tick });
+      return "applied";
+    }
+    return deleteRestAtCaret();
+  }, [doc, execute, deleteRestAtCaret]);
 
   const navigate = useCallback(
     (dx: number, dy: number) => {
@@ -362,6 +420,53 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     if (!bar || bar.tempo === null) return;
     execute({ type: "setBarTempo", barId: bar.id, tempo: null });
   }, [doc, execute]);
+
+  /** Edits the score title / author (from the editable header). */
+  const setScoreMeta = useCallback((title?: string, artist?: string): void => {
+    if (title === undefined && artist === undefined) return;
+    execute({
+      type: "setScoreMeta",
+      ...(title !== undefined ? { title } : {}),
+      ...(artist !== undefined ? { artist } : {}),
+    });
+  }, [doc, execute]);
+
+  /** Key-signature change at a measure (until the next differing change). */
+  const setKeySignatureAtBar = useCallback(
+    (barIndex: number, fifths: number, mode: "major" | "minor"): void => {
+      const bar = doc.score.bars[barIndex];
+      if (!bar) return;
+      execute({ type: "setKeySignature", barId: bar.id, fifths, mode });
+    },
+    [doc, execute],
+  );
+
+  /** Chord-sheet entry: lead-sheet symbol + a chosen voicing for N ticks. */
+  const addChordAtBar = useCallback(
+    (
+      barIndex: number,
+      rootPc: number,
+      quality: ChordQuality,
+      duration: number,
+      notes: readonly VoicedNote[],
+    ): void => {
+      const s = doc.score;
+      const bar = s.bars[barIndex];
+      const track = s.tracks[0];
+      if (!bar || !track) return;
+      const key = keyAtBar(s, barIndex);
+      const symbol = chordSymbol(rootPc, quality, key.fifths);
+      execute({
+        type: "addChord",
+        trackId: track.id,
+        barId: bar.id,
+        duration,
+        symbol,
+        notes: notes.map((n) => ({ pitch: n.pitch, string: n.string, fret: n.fret })),
+      });
+    },
+    [doc, execute],
+  );
 
   /** Changes the time signature from measure `barIndex` onward. */
   const setTimeSignatureAtBar = useCallback((barIndex: number, numerator: number, denominator: number): void => {
@@ -466,6 +571,10 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
           e.preventDefault();
           deleteAtCaret();
           break;
+        case "Delete":
+          e.preventDefault();
+          deleteBeatAtCaret();
+          break;
         case "b":
         case "B":
           e.preventDefault();
@@ -502,7 +611,7 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
           break;
       }
     },
-    [placeFret, deleteAtCaret, writeRest, toggleArticulation, navigate, undo, redo],
+    [placeFret, deleteAtCaret, deleteBeatAtCaret, writeRest, toggleArticulation, navigate, undo, redo],
   );
 
   // window-level keyboard: editing works without focusing the score canvas
@@ -592,6 +701,9 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     setTempo,
     setTempoAtBar,
     removeTempoAtBar,
+    setScoreMeta,
+    setKeySignatureAtBar,
+    addChordAtBar,
     setTimeSignature,
     setTimeSignatureAtBar,
     handleKeyDown,

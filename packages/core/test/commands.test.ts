@@ -264,6 +264,127 @@ describe("applyCommand", () => {
     expect(off.bars[0]!.voices[0]!.notes[0]!.articulations).toHaveLength(0);
   });
 
+  it("setKeySignature applies until the next differing change", () => {
+    const score = makeScore();
+    let nextBarId = 400;
+    const seqCtx: CommandContext = {
+      nextNoteId: () => 200 as never,
+      nextBarId: () => nextBarId++ as never,
+    };
+    let state = score;
+    for (let i = 0; i < 3; i++) state = applyCommand(state, { type: "addBar", afterBarId: null }, seqCtx);
+    // G major (1 fifth) at measure 2
+    state = applyCommand(state, {
+      type: "setKeySignature",
+      barId: state.bars[1]!.id,
+      fifths: 1,
+      mode: "major",
+    }, seqCtx);
+    // now C major at measure 1 — must not erase the G-major change at measure 2
+    const out = applyCommand(state, {
+      type: "setKeySignature",
+      barId: state.bars[0]!.id,
+      fifths: 0,
+      mode: "major",
+    }, seqCtx);
+    expect(out.bars[0]!.keyChange).toEqual({ fifths: 0, mode: "major" });
+    expect(out.bars[1]!.keyChange).toEqual({ fifths: 1, mode: "major" }); // later change survives
+    expect(out.bars[2]!.keyChange).toBeNull(); // inherits G major
+    expect(out.bars[3]!.keyChange).toBeNull();
+  });
+
+  it("addChord writes the symbol and voicing for the chosen note length", () => {
+    const score = makeScore();
+    const withSecond = applyCommand(score, { type: "addBar", afterBarId: null }, ctx);
+    const next = applyCommand(withSecond, {
+      type: "addChord",
+      trackId: 1 as never,
+      barId: 1 as never,
+      duration: 480, // quarter
+      symbol: "D",
+      notes: [
+        { pitch: 50, string: 2, fret: 0 },
+        { pitch: 57, string: 1, fret: 2 },
+        { pitch: 66, string: 0, fret: 2 },
+      ],
+    }, ctx);
+    expect(next.bars[0]!.chordSymbol).toBe("D");
+    expect(next.bars[1]!.chordSymbol ?? null).toBeNull(); // one measure only
+    const notes = next.bars[0]!.voices[0]!.notes;
+    expect(notes).toHaveLength(3);
+    expect(notes.every((n) => n.start === 0 && n.duration === 480)).toBe(true);
+  });
+
+  it("deleting a chord's notes also removes its symbol", () => {
+    const score = makeScore();
+    const withChord = applyCommand(score, {
+      type: "addChord",
+      trackId: 1 as never,
+      barId: 1 as never,
+      duration: 1920,
+      symbol: "D7",
+      notes: [{ pitch: 50, string: 2, fret: 0 }],
+    }, ctx);
+    // addChord replaced the fixture note too — the bar is all-chord now
+    const cleared = applyCommand(withChord, {
+      type: "removeBeat",
+      trackId: 1 as never,
+      barId: 1 as never,
+      start: 0,
+    }, ctx);
+    expect(cleared.bars[0]!.voices[0]!.notes).toHaveLength(0);
+    expect(cleared.bars[0]!.chordSymbol ?? null).toBeNull();
+  });
+
+  it("removeBeat deletes the whole column; removeRange pulls notes into place", () => {
+    const score = makeScore();
+    let nextNoteId = 500;
+    const seqCtx: CommandContext = {
+      nextNoteId: () => nextNoteId++ as never,
+      nextBarId: () => 300 as never,
+    };
+    const column = applyCommand(score, {
+      type: "addNote",
+      trackId: 1 as never,
+      barId: 1 as never,
+      note: { pitch: 62, start: 480, duration: 240, string: 1, fret: 2 },
+    }, seqCtx);
+    const withoutColumn = applyCommand(column, {
+      type: "removeBeat",
+      trackId: 1 as never,
+      barId: 1 as never,
+      start: 480,
+    }, seqCtx);
+    expect(withoutColumn.bars[0]!.voices[0]!.notes).toHaveLength(1); // fixture note survives
+
+    // delete the gap [480, 960) → the note at 1440 is pulled to 960
+    const withLate = applyCommand(score, {
+      type: "addNote",
+      trackId: 1 as never,
+      barId: 1 as never,
+      note: { pitch: 64, start: 1440, duration: 240, string: 0, fret: 0 },
+    }, seqCtx);
+    const rippled = applyCommand(withLate, {
+      type: "removeRange",
+      trackId: 1 as never,
+      barId: 1 as never,
+      start: 480,
+      duration: 480,
+    }, seqCtx);
+    const late = rippled.bars[0]!.voices[0]!.notes.find((n) => n.start !== 0);
+    expect(late?.start).toBe(960);
+  });
+
+  it("setScoreMeta edits title and author", () => {
+    const score = makeScore();
+    const next = applyCommand(score, { type: "setScoreMeta", title: "Sower Song", artist: "Me" }, ctx);
+    expect(next.title).toBe("Sower Song");
+    expect(next.artist).toBe("Me");
+    const partial = applyCommand(next, { type: "setScoreMeta", artist: "You" }, ctx);
+    expect(partial.title).toBe("Sower Song");
+    expect(partial.artist).toBe("You");
+  });
+
   it("setTimeSignature applies from the target bar onward", () => {
     const score = makeScore();
     const withSecond = applyCommand(score, { type: "addBar", afterBarId: null }, ctx);

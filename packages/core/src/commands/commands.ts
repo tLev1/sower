@@ -21,7 +21,12 @@ export type Command =
   | SetTimeSignature
   | AddRest
   | SetRestDuration
-  | ToggleNoteArticulation;
+  | ToggleNoteArticulation
+  | SetScoreMeta
+  | SetKeySignature
+  | AddChord
+  | RemoveBeat
+  | RemoveRange;
 
 export interface SetNotePitch {
   readonly type: "setNotePitch";
@@ -127,6 +132,55 @@ export interface ToggleNoteArticulation {
   readonly articulation: "palmMute" | "staccato" | "letRing" | "ghost" | "accent";
 }
 
+/** Edits the score title / author (undefined fields stay untouched). */
+export interface SetScoreMeta {
+  readonly type: "setScoreMeta";
+  readonly title?: string;
+  readonly artist?: string;
+}
+
+/** Key-signature change at a measure (applies until the next differing change). */
+export interface SetKeySignature {
+  readonly type: "setKeySignature";
+  readonly barId: BarId;
+  readonly fifths: number;
+  readonly mode: "major" | "minor";
+}
+
+/**
+ * Writes a chord-sheet entry: the lead-sheet symbol on the measure and the
+ * voicing sounding there for `duration` ticks (the chord's note length).
+ */
+export interface AddChord {
+  readonly type: "addChord";
+  readonly trackId: TrackId;
+  readonly barId: BarId;
+  readonly duration: number;
+  readonly symbol: string;
+  readonly notes: readonly { readonly pitch: number; readonly string: number; readonly fret: number }[];
+}
+
+/** Deletes the whole beat column at a tick (notes on every string). */
+export interface RemoveBeat {
+  readonly type: "removeBeat";
+  readonly trackId: TrackId;
+  readonly barId: BarId;
+  readonly start: number;
+}
+
+/**
+ * Deletes a rest span (a written rest or an auto-filled gap) and pulls the
+ * rest of the measure earlier by its length — "delete the rest and the
+ * following notes move into place".
+ */
+export interface RemoveRange {
+  readonly type: "removeRange";
+  readonly trackId: TrackId;
+  readonly barId: BarId;
+  readonly start: number;
+  readonly duration: number;
+}
+
 export interface CommandContext {
   /** Monotonic id generator shared across the editing session. */
   nextNoteId(): NoteId;
@@ -178,10 +232,13 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
       ]);
     }
     case "removeNote":
-      return mapVoice(score, command.trackId, command.barId, (notes, rests) => [
-        notes.filter((n) => n.id !== command.noteId),
-        rests,
-      ]);
+      return clearEmptyChord(
+        mapVoice(score, command.trackId, command.barId, (notes, rests) => [
+          notes.filter((n) => n.id !== command.noteId),
+          rests,
+        ]),
+        command.barId,
+      );
     case "setTrackInstrument":
       return {
         ...score,
@@ -351,6 +408,116 @@ export function applyCommand(score: Score, command: Command, ctx: CommandContext
             : [...note.articulations, articulationOf(command.articulation)],
         };
       });
+    case "setScoreMeta":
+      return {
+        ...score,
+        title: command.title ?? score.title,
+        artist: command.artist ?? score.artist,
+      };
+    case "setKeySignature": {
+      if (!Number.isInteger(command.fifths) || command.fifths < -7 || command.fifths > 7) {
+        throw new Error(`Invalid key signature fifths ${String(command.fifths)}`);
+      }
+      const index = score.bars.findIndex((b) => b.id === command.barId);
+      if (index < 0) throw new Error(`Bar ${String(command.barId)} not found`);
+      // the key in force before this change (propagated from earlier markers)
+      let oldFifths = 0;
+      let oldMode: "major" | "minor" = "major";
+      for (let i = 0; i <= index; i++) {
+        const kc = score.bars[i]?.keyChange;
+        if (kc) {
+          oldFifths = kc.fifths;
+          oldMode = kc.mode;
+        }
+      }
+      // the change applies until the next EXPLICIT differing change survives
+      let last = score.bars.length - 1;
+      for (let j = index + 1; j < score.bars.length; j++) {
+        const kc = score.bars[j]?.keyChange;
+        if (kc && (kc.fifths !== oldFifths || kc.mode !== oldMode)) {
+          last = j - 1;
+          break;
+        }
+      }
+      return {
+        ...score,
+        bars: score.bars.map((bar, i) => {
+          if (i === index) return { ...bar, keyChange: { fifths: command.fifths, mode: command.mode } };
+          if (i > index && i <= last) return { ...bar, keyChange: null };
+          return bar;
+        }),
+      };
+    }
+    case "addChord": {
+      if (!Number.isInteger(command.duration) || command.duration < 30) {
+        throw new Error(`Invalid chord duration ${String(command.duration)}`);
+      }
+      const chordIndex = score.bars.findIndex((b) => b.id === command.barId);
+      if (chordIndex < 0) throw new Error(`Bar ${String(command.barId)} not found`);
+      // the chord owns the measure: symbol above it, the voicing sounding
+      // for the selected note length (rests fill the rest of the measure)
+      return {
+        ...score,
+        bars: score.bars.map((bar, i) => {
+          if (i !== chordIndex) return bar;
+          const capacity = ticksPerBar(bar.timeSignature);
+          const duration = Math.min(command.duration, Math.max(30, capacity));
+          const voices = bar.voices.map((voice, vi) => {
+            if (vi !== 0) return voice;
+            const notes: Note[] = command.notes.map((n) => ({
+              id: ctx.nextNoteId(),
+              pitch: n.pitch,
+              string: n.string,
+              fret: n.fret,
+              start: 0,
+              duration,
+              velocity: 100,
+              articulations: [],
+            }));
+            return { ...voice, notes, rests: carveRests(voice.rests ?? [], 0, duration) };
+          });
+          return { ...bar, chordSymbol: command.symbol, voices };
+        }),
+      };
+    }
+    case "removeBeat":
+      return clearEmptyChord(
+        mapVoice(score, command.trackId, command.barId, (notes, rests) => [
+          notes.filter((n) => n.start !== command.start),
+          rests.filter((r) => r.start !== command.start),
+        ]),
+        command.barId,
+      );
+    case "removeRange": {
+      if (!Number.isInteger(command.duration) || command.duration < 30) {
+        throw new Error(`Invalid range duration ${String(command.duration)}`);
+      }
+      return clearEmptyChord(
+        mapVoice(score, command.trackId, command.barId, (notes, rests) => {
+        const end = command.start + command.duration;
+        const keep = <T extends { start: number; duration: number }>(items: readonly T[]): T[] => {
+          const out: T[] = [];
+          for (const item of items) {
+            const itemEnd = item.start + item.duration;
+            if (item.start >= command.start && item.start < end) continue; // inside the removed time
+            if (item.start < command.start && itemEnd > command.start) {
+              const trimmed = command.start - item.start;
+              if (trimmed >= 30) out.push({ ...item, duration: trimmed });
+              continue;
+            }
+            if (item.start >= end) {
+              out.push({ ...item, start: item.start - command.duration }); // pull into place
+              continue;
+            }
+            out.push(item);
+          }
+          return out;
+        };
+        return [keep(notes), keep(rests)];
+        }),
+        command.barId,
+      );
+    }
   }
 }
 
@@ -410,6 +577,18 @@ function mapVoice(
     return { ...bar, voices };
   });
   return { ...score, bars };
+}
+
+/** Deleting the last note of a measure also removes its chord symbol. */
+function clearEmptyChord(score: Score, barId: BarId): Score {
+  return {
+    ...score,
+    bars: score.bars.map((bar) => {
+      if (bar.id !== barId || !bar.chordSymbol) return bar;
+      const empty = (bar.voices[0]?.notes.length ?? 0) === 0;
+      return empty ? { ...bar, chordSymbol: null } : bar;
+    }),
+  };
 }
 
 /**

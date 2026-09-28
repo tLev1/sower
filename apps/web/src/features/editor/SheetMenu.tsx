@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -8,6 +9,15 @@ import {
 } from "react";
 import { TICKS_PER_QUARTER, type Score } from "@sower/core";
 import { tempoMarkAt } from "@sower/core";
+import {
+  STANDARD_GUITAR_TUNING,
+  diatonicChords,
+  enumerateVoicings,
+  keyAtBar,
+  spellRoot,
+  type ChordQuality,
+  type VoicedNote,
+} from "@sower/core";
 import { G } from "@sower/render";
 import {
   DURATION_VALUES,
@@ -19,7 +29,7 @@ import {
 } from "./caret";
 
 export interface SheetMenuState {
-  readonly kind: "context" | "tempo" | "timesig" | "notelen";
+  readonly kind: "context" | "tempo" | "timesig" | "notelen" | "meta" | "key" | "chord";
   readonly barIndex: number;
   /** Viewport coordinates the menu/popover anchors to. */
   readonly x: number;
@@ -41,6 +51,9 @@ interface SheetMenuProps {
   readonly onNoteLength: (value: DurationValue, dotted: boolean) => void;
   readonly onInsertMeasure: (barIndex: number) => void;
   readonly onDeleteMeasure: (barIndex: number) => boolean;
+  readonly onScoreMeta: (title?: string, artist?: string) => void;
+  readonly onKeyChange: (barIndex: number, fifths: number, mode: "major" | "minor") => void;
+  readonly onAddChord: (barIndex: number, rootPc: number, quality: ChordQuality, duration: number, notes: readonly VoicedNote[]) => void;
 }
 
 /** Bravura metronome glyphs per note value. */
@@ -184,6 +197,36 @@ function ContextMenu(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
         <span className="sheet-menu-glyph" aria-hidden>{glyph(G.timeSigCommon)}</span>
         Time signature…
       </button>
+      <button
+        className="sheet-menu-item"
+        role="menuitem"
+        onClick={() => {
+          props.onMenuAction({
+            kind: "key",
+            barIndex: props.menu.barIndex,
+            x: props.menu.x,
+            y: props.menu.y,
+          });
+        }}
+      >
+        <span className="sheet-menu-glyph" aria-hidden>{glyph(G.accidentalSharp)}</span>
+        Key signature…
+      </button>
+      <button
+        className="sheet-menu-item"
+        role="menuitem"
+        onClick={() => {
+          props.onMenuAction({
+            kind: "chord",
+            barIndex: props.menu.barIndex,
+            x: props.menu.x,
+            y: props.menu.y,
+          });
+        }}
+      >
+        <span className="sheet-menu-glyph" aria-hidden>♫</span>
+        Add chord…
+      </button>
       <div className="sheet-menu-sep" />
       <button
         className="sheet-menu-item"
@@ -214,10 +257,11 @@ function ContextMenu(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
 function MarkPopover(props: SheetMenuProps & { menu: SheetMenuState }): ReactElement {
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, props.onClose);
-  const width = props.menu.kind === "tempo" ? 256 : props.menu.kind === "notelen" ? 252 : 280;
+  const kind = props.menu.kind;
+  const width = kind === "tempo" ? 256 : kind === "notelen" ? 252 : kind === "chord" ? 384 : kind === "key" ? 252 : kind === "meta" ? 252 : 280;
   return (
     <div className="sheet-popover" style={anchorStyle(props.menu.x, props.menu.y, width)} ref={ref}>
-      {props.menu.kind === "tempo" ? (
+      {kind === "tempo" ? (
         <TempoEditor
           barIndex={props.menu.barIndex}
           score={props.score}
@@ -225,12 +269,18 @@ function MarkPopover(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
           onRemoveTempo={props.onRemoveTempo}
           onClose={props.onClose}
         />
-      ) : props.menu.kind === "notelen" ? (
+      ) : kind === "notelen" ? (
         <NoteLengthEditor
           barIndex={props.menu.barIndex}
           entry={props.entryDuration}
           onNoteLength={props.onNoteLength}
         />
+      ) : kind === "meta" ? (
+        <MetaEditor score={props.score} onScoreMeta={props.onScoreMeta} />
+      ) : kind === "key" ? (
+        <KeyEditor barIndex={props.menu.barIndex} score={props.score} onKeyChange={props.onKeyChange} />
+      ) : kind === "chord" ? (
+        <ChordEditor barIndex={props.menu.barIndex} score={props.score} onAddChord={props.onAddChord} />
       ) : (
         <TimeSigEditor
           barIndex={props.menu.barIndex}
@@ -238,6 +288,201 @@ function MarkPopover(props: SheetMenuProps & { menu: SheetMenuState }): ReactEle
           onTimeSignatureChange={props.onTimeSignatureChange}
         />
       )}
+    </div>
+  );
+}
+
+/** Editable score title + author. */
+function MetaEditor(props: {
+  readonly score: Score;
+  readonly onScoreMeta: (title?: string, artist?: string) => void;
+}): ReactElement {
+  const [title, setTitle] = useState(props.score.title);
+  const [artist, setArtist] = useState(props.score.artist);
+  return (
+    <div className="tempo-editor">
+      <div className="sheet-popover-title">Title & author</div>
+      <label className="meta-field">
+        <span className="sheet-popover-unit">Title</span>
+        <input
+          className="sheet-popover-input wide"
+          value={title}
+          onChange={(e) => { setTitle(e.target.value); }}
+          onBlur={() => { props.onScoreMeta(title); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") props.onScoreMeta(title);
+          }}
+          aria-label="Score title"
+        />
+      </label>
+      <label className="meta-field">
+        <span className="sheet-popover-unit">Author</span>
+        <input
+          className="sheet-popover-input wide"
+          value={artist}
+          onChange={(e) => { setArtist(e.target.value); }}
+          onBlur={() => { props.onScoreMeta(undefined, artist); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") props.onScoreMeta(undefined, artist);
+          }}
+          aria-label="Score author"
+        />
+      </label>
+    </div>
+  );
+}
+
+const MAJOR_KEYS: readonly { readonly fifths: number; readonly label: string }[] = [
+  { fifths: -7, label: "C♭" }, { fifths: -6, label: "G♭" }, { fifths: -5, label: "D♭" },
+  { fifths: -4, label: "A♭" }, { fifths: -3, label: "E♭" }, { fifths: -2, label: "B♭" },
+  { fifths: -1, label: "F" }, { fifths: 0, label: "C" }, { fifths: 1, label: "G" },
+  { fifths: 2, label: "D" }, { fifths: 3, label: "A" }, { fifths: 4, label: "E" },
+  { fifths: 5, label: "B" }, { fifths: 6, label: "F♯" }, { fifths: 7, label: "C♯" },
+];
+
+/** Key signature at a measure: 15 keys × major/minor (engraved per standard). */
+function KeyEditor(props: {
+  readonly barIndex: number;
+  readonly score: Score;
+  readonly onKeyChange: (barIndex: number, fifths: number, mode: "major" | "minor") => void;
+}): ReactElement {
+  const key = keyAtBar(props.score, props.barIndex);
+  const [mode, setMode] = useState<"major" | "minor">(key.mode);
+  return (
+    <div className="tempo-editor">
+      <div className="sheet-popover-title">Key signature · from measure {props.barIndex + 1}</div>
+      <div className="tempo-units" role="radiogroup" aria-label="Mode">
+        {(["major", "minor"] as const).map((m) => (
+          <button
+            key={m}
+            role="radio"
+            aria-checked={m === mode}
+            className={m === mode ? "glyph-btn active wide" : "glyph-btn wide"}
+            onClick={() => {
+              setMode(m);
+              props.onKeyChange(props.barIndex, key.fifths, m);
+            }}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+      <div className="key-grid">
+        {MAJOR_KEYS.map((k) => {
+          const label = mode === "minor" ? `${spellRoot(((7 * k.fifths) % 12 + 21) % 12, k.fifths)}m` : k.label;
+          const active = k.fifths === key.fifths && mode === key.mode;
+          return (
+            <button
+              key={k.fifths}
+              className={active ? "meter-chip active" : "meter-chip"}
+              onClick={() => {
+                setMode(mode);
+                props.onKeyChange(props.barIndex, k.fifths, mode);
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Add chord: key-aware chord list → inversion/position → note length → Add. */
+const CHORD_LENGTHS: readonly { readonly label: string; readonly ticks: number }[] = [
+  { label: "Whole", ticks: 1920 },
+  { label: "Dotted half", ticks: 1440 },
+  { label: "Half", ticks: 960 },
+  { label: "Dotted quarter", ticks: 720 },
+  { label: "Quarter", ticks: 480 },
+  { label: "Dotted eighth", ticks: 360 },
+  { label: "Eighth", ticks: 240 },
+  { label: "16th", ticks: 120 },
+  { label: "32nd", ticks: 60 },
+];
+
+function ChordEditor(props: {
+  readonly barIndex: number;
+  readonly score: Score;
+  readonly onAddChord: (
+    barIndex: number,
+    rootPc: number,
+    quality: ChordQuality,
+    duration: number,
+    notes: readonly VoicedNote[],
+  ) => void;
+}): ReactElement {
+  const key = keyAtBar(props.score, props.barIndex);
+  // the chord list follows the measure's key signature
+  const chords = diatonicChords(key);
+  const [chordIdx, setChordIdx] = useState(0);
+  const chosen = chords[chordIdx] ?? chords[0];
+  const voicings = useMemo(
+    () => (chosen ? enumerateVoicings(chosen.rootPc, chosen.quality, STANDARD_GUITAR_TUNING) : []),
+    [chosen],
+  );
+  const [voicingIdx, setVoicingIdx] = useState(0);
+  const [lengthIdx, setLengthIdx] = useState(CHORD_LENGTHS.findIndex((l) => l.ticks === 480));
+  const voicing = voicings[Math.min(voicingIdx, Math.max(0, voicings.length - 1))];
+  const length = CHORD_LENGTHS[lengthIdx < 0 ? 4 : lengthIdx] ?? CHORD_LENGTHS[4];
+  return (
+    <div className="tempo-editor">
+      <div className="sheet-popover-title">
+        Add chord · measure {props.barIndex + 1} ({key.mode === "minor" ? "minor" : "major"} key)
+      </div>
+      <div className="chord-row">
+        <select
+          className="sheet-popover-select wide"
+          value={String(chordIdx)}
+          onChange={(e) => {
+            setChordIdx(Number(e.target.value));
+            setVoicingIdx(0);
+          }}
+          aria-label="Chord"
+        >
+          {chords.map((c, i) => (
+            <option key={`${c.degree}-${c.quality}`} value={String(i)}>
+              {c.degree ? `${c.symbol} (${c.degree})` : c.symbol}
+            </option>
+          ))}
+        </select>
+        <select
+          className="sheet-popover-select wide"
+          value={String(voicingIdx)}
+          onChange={(e) => { setVoicingIdx(Number(e.target.value)); }}
+          aria-label="Chord inversion and position"
+        >
+          {voicings.map((v, i) => (
+            <option key={v.frets} value={String(i)}>
+              {`${i + 1}. ${v.label} · ${v.frets}`}
+            </option>
+          ))}
+        </select>
+        <select
+          className="sheet-popover-select wide"
+          value={String(lengthIdx)}
+          onChange={(e) => { setLengthIdx(Number(e.target.value)); }}
+          aria-label="Chord length"
+        >
+          {CHORD_LENGTHS.map((l, i) => (
+            <option key={l.label} value={String(i)}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+        <button
+          className="sheet-popover-apply"
+          disabled={!chosen || !voicing}
+          onClick={() => {
+            if (chosen && voicing) {
+              props.onAddChord(props.barIndex, chosen.rootPc, chosen.quality, length?.ticks ?? 480, voicing.notes);
+            }
+          }}
+        >
+          Add
+        </button>
+      </div>
     </div>
   );
 }

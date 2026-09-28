@@ -54,7 +54,7 @@ export interface ScoreInteraction {
 
 /** A click on an editable sheet mark (time signature block / tempo equation). */
 export interface SheetMarkerClick {
-  readonly action: "edit-time-sig" | "edit-tempo";
+  readonly action: "edit-time-sig" | "edit-tempo" | "edit-title" | "edit-author";
   readonly barIndex: number;
   readonly clientX: number;
   readonly clientY: number;

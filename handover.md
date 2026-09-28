@@ -23,6 +23,9 @@ multi-instrumentalist (guitar main, bass, piano, drums, violin), producer
 planned from first usable milestone.
 
 Name: **Sower** (decided). Repository folder: `C:\dev\stdBd`.
+Target depth: MuseScore-level notation — the full parity inventory lives in
+`Features.md` (grouped like the MuseScore Studio Handbook chapters) and is
+tracked as the parity track in `docs/ROADMAP.md`.
 
 ## 2. Stack & environment
 
@@ -35,7 +38,7 @@ Name: **Sower** (decided). Repository folder: `C:\dev\stdBd`.
 | Rendering | **Sower engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
 | Playback | WebAudio Karplus-Strong synth (v1) | articulation-aware; sample engines plug in via SynthEngine seam later |
 | Fonts | Bravura (public/fonts), Inter Variable + JetBrains Mono Variable (fontsource) | music glyphs + UI/mono type |
-| Tests | Vitest 3 | 66 tests green (32 core + 22 render + 12 web) |
+| Tests | Vitest 3 | 75 tests green (41 core + 22 render + 12 web) |
 | Lint | ESLint flat config, typescript-eslint strictTypeChecked | `any` is an error; `scripts/` ignored |
 | CI | `.github/workflows/ci.yml` | lint → typecheck → test → build |
 | E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** — always launch Edge |
@@ -91,6 +94,8 @@ C:\dev\stdBd
 │   ├── probe-player.mjs       player correctness: offset-relative scheduling,
 │   │                          note-length sustain (alphaTab semantics),
 │   │                          BPM scaling + live edits, sheet-following metronome
+│   ├── probe-sheet-v3.mjs     title/author, key signature, chord sheets, deletion model
+│   ├── visual-sower.mjs       screenshot: chord symbol + key change
 │   ├── visual-v2.mjs          screenshots: tempo popover, 7/8 sheet, context menu
 │   ├── probe-sync.mjs         playhead continuity sampling (frozen-frame / jump detector)
 │   ├── probe-buttons.mjs      measure +/− controls (real mouse clicks)
@@ -174,7 +179,10 @@ Git repo on `main`; commit as you go (conventional commits).
   scales to fill the page width with NO scale floor (guaranteed 100% fit).
   The engine measures the wrapper's CONTENT box (not the padded
   `clientWidth`) so the score never overflows the page margins (the old
-  48 px padding overflow caused a horizontal scrollbar).
+  48 px padding overflow caused a horizontal scrollbar). Notation and tab
+  staves keep a generous gap (3.8 spaces + the score's ledger overhang) so
+  noteheads/ledger lines never touch the tab, and TAB_LINE_GAP is 12 px so
+  stacked chord numbers stay legible.
 - **Notation-accurate rest filling** (Gould, "Behind Bars"): empty measures
   take a single whole rest; each gap is filled per BEAT segment (a rest never
   crosses a compound dotted-beat boundary) with the longest standard rests
@@ -263,6 +271,30 @@ Git repo on `main`; commit as you go (conventional commits).
   accent on the caret note (`toggleNoteArticulation`) — "P.M." above the
   staff, staccato dot and accent glyph opposite the stem, ghost frets in
   parentheses; playback honors all of them.
+- **Chord sheets + keys + meta** (`packages/core/src/operations/chords.ts`):
+  key-aware chord map (diatonic chords with roman numerals per the measure's
+  key + the full Berklee-quality set), lead-sheet symbol spelling per key,
+  and `enumerateVoicings` — every playable position of a chord across the
+  neck (root / 1st / 2nd / 3rd inversions on all octaves, ≤4-fret span,
+  interior mutes allowed, tab pattern per voicing — the "voicing N of M"
+  space of the Guitar Chords tools). Right-click → "Add chord…" = three
+  dropdowns (chord list follows the key, inversion/position, note length) +
+  Add: the symbol engraves above the staff and the chosen voicing is written
+  into the measure for the chosen length. Deleting the chord's notes also
+  removes its symbol (`clearEmptyChord` on removeNote/removeBeat/
+  removeRange). "Key signature…" (15 keys × major/minor): accidentals
+  engrave at the change bar after a double barline at their STANDARD staff
+  slots per the Essential Dictionary of Music Notation (letter-octave slots:
+  F♯ top line, C♯ 3rd space, B♭ middle line… — `keySigPositions`, no
+  guitar transposition!) and changes to C/A-minor cancel with naturals.
+  Title/author are editable by clicking the header (`setScoreMeta`; the hit
+  band hugs the label width).
+- **Deletion model**: `Backspace` = the note on the caret's string; `Del` =
+  the whole beat column (all strings, `removeBeat`); `Backspace`/`Del` on
+  rest time = `removeRange` — deletes the written rest or auto-gap span and
+  pulls the rest of the measure earlier ("delete the rest, the next notes
+  move into place"). Notes carve the rests they cover (`carveRests` in
+  addNote/setNoteDuration) and `addRest` overwrites like MuseScore.
 - **Play-from-selection**: the player resolves the start position into
   seconds AFTER the tempo map exists (`beginAt()` rebuilds the timeline
   first — converting earlier, with an empty tempo map, made playback start
@@ -341,6 +373,16 @@ Git repo on `main`; commit as you go (conventional commits).
   right after the barline on mid-system change bars.
 
 ## 6. Critical gotchas (do not re-learn)
+
+0. **MANDATORY (owner's standing rule)**: every new feature or adjustment MUST
+   consult standard musical notation from the official documentation and
+   respect it entirely — the manual is *Essential Dictionary of Music
+   Notation* (Gerou & Lusk):
+   `https://musescore.org/sites/musescore.org/files/2022-02/EssentialDictionaryOfMusicNotation_0.pdf`
+   (scanned PDF — no extractable text; verify placements against its rules,
+   e.g. via structured references that mirror it such as the Wikipedia
+   key-signature/staff-position conventions). Do not improvise notation
+   geometry (glyph positions, orders, spacing) — follow the manual.
 
 1. **Engine lives behind adapter contracts** — `ScoreRenderer` /
    `ScorePlayer` / `ScoreInteraction` in `packages/render/src/renderer.ts`.
@@ -425,6 +467,13 @@ Git repo on `main`; commit as you go (conventional commits).
   (eighth + 16th + 16th rest, others untouched); the sheet fits the page
   100% (scrollWidth == clientWidth, no horizontal scroll); measure 5 wraps
   to a new line (4 per row); B writes exact-value rests (editable like notes); M/S toggle articulations with P.M. engraved
+- Sheet v3 (probe-sheet-v3.mjs, 11/11): title/author editing commits to the
+  score; Key signature from the right-click menu engraves at its measure
+  (D major = 2 sharps, double barline); Add chord offers the 3 dropdowns
+  (key-aware chord list, all inversions/positions, note length) and writes
+  symbol + chosen voicing (Bm half); deleting a chord removes its symbol;
+  Del removes the whole beat group and deleting the rest pulls the next
+  notes into place 
 - Browser-verified via `scripts/interact-test.mjs` (real Edge):
   - click on TAB number → `Bar 1 · String 1 · Step 1` ✓
   - click empty A2 line → `Bar 1 · String 5 · Step 3` ✓

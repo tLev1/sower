@@ -18,7 +18,7 @@ const UI_TEXT_FONT = "Inter Variable, Inter, 'Segoe UI', sans-serif";
 const UI_MONO_FONT = "JetBrains Mono Variable, 'JetBrains Mono', Consolas, monospace";
 
 /** Vertical gap between tab string lines (px) â€” matches layout.TAB_LINE_GAP. */
-const TAB_LINE_GAP = 9;
+const TAB_LINE_GAP = 12;
 
 function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -40,8 +40,26 @@ function staffPos(midi: number, isGuitar: boolean): number {
 }
 
 /** Written MIDI notes of key-signature accidentals, in order (treble octave). */
-const KEY_SIG_SHARP: readonly number[] = [77, 72, 79, 74, 69, 76, 71]; // F#5 C#5 G#5 D#5 A#4 E#5 B#4
-const KEY_SIG_FLAT: readonly number[] = [70, 75, 68, 74, 66, 71, 64]; // Bb4 Eb5 Ab4 Db5 Gb4 Cb5 Fb4
+/**
+ * Key-signature accidental staff positions, in half-space steps from the
+ * middle line — Essential Dictionary of Music Notation (Gerou & Lusk):
+ * each accidental sits at its letter's octave slot, in circle-of-fifths
+ * order (sharps F C G D A E B; flats B E A D G C F).
+ */
+const KEY_SIG_SHARP_POS: readonly number[] = [4, 1, 5, 2, -1, 3, 0]; // F♯5 C♯5 G♯5 D♯5 A♯4 E♯5 B♯4
+const KEY_SIG_FLAT_POS: readonly number[] = [0, 3, -1, 2, -2, 1, -3]; // B♭4 E♭5 A♭4 D♭5 G♭4 C♭5 F♭4
+/** The same letter slots on bass-clef staves. */
+const KEY_SIG_SHARP_POS_BASS: readonly number[] = [2, -1, 3, 0, -3, 1, -2];
+const KEY_SIG_FLAT_POS_BASS: readonly number[] = [-2, 1, -3, 0, -4, -1, -5];
+
+/** The first |fifths| accidental slots of a key signature for a clef. */
+export function keySigPositions(fifths: number, isBass: boolean): readonly number[] {
+  const table =
+    fifths >= 0
+      ? (isBass ? KEY_SIG_SHARP_POS_BASS : KEY_SIG_SHARP_POS)
+      : (isBass ? KEY_SIG_FLAT_POS_BASS : KEY_SIG_FLAT_POS);
+  return table.slice(0, Math.min(Math.abs(fifths), 7));
+}
 
 const STEM_ATTACH = 0.58;
 const STEM_LEN = 3.4;
@@ -132,7 +150,8 @@ export function engrave(layout: LayoutDocument): string {
       // a meter change opening the next measure gets a thin-thin double
       // barline (standard practice before time-signature changes)
       const next = system.bars[b + 1];
-      const closeWithDouble = next?.timeSignatureChange ?? false;
+      const closeWithDouble =
+        (next?.timeSignatureChange ?? false) || (next?.keyChangeAt ?? null) !== null;
       for (const tb of bar.tracks) drawTrackBar(bar, tb, S, isFinal, closeWithDouble, parts);
     }
   }
@@ -238,7 +257,35 @@ function drawTrackBar(
   }
 
   if (bar.systemStart) drawSystemHeader(bar, tb, S, parts);
+  // mid-system key change: accidentals right after the barline (before any
+  // meter change — key signature precedes time signature by convention)
+  if (bar.keyChangeAt && tb.notation) {
+    drawKeyChangeAt(
+      bar.x0 + S * 1.0,
+      bar.keyChangeAt.fifths,
+      bar.keyChangeAt.prevFifths,
+      tb.staffTop,
+      S,
+      parts,
+      tb.track.clef === "f4",
+    );
+  }
   if (bar.timeSignature) drawTimeSignature(bar, tb, S, parts);
+  // lead-sheet chord symbol above the staff (anchored at the content start —
+  // past the clef/key/time lead on system-opening bars)
+  if (bar.bar.chordSymbol && tb.notation) {
+    const firstBeat = bar.tracks[0]?.beats[0];
+    const chordX = firstBeat ? firstBeat.x - firstBeat.width / 2 : bar.x0 + S * 0.8;
+    parts.push(
+      uiText(chordX, tb.staffTop - S * 1.8, bar.bar.chordSymbol, {
+        size: 13,
+        weight: 640,
+        fill: engravingTheme.fontColor,
+        anchor: "start",
+        cls: "stdb-chord",
+      }),
+    );
+  }
   drawBarNumber(bar, tb, S, parts);
   drawTempoMark(bar, tb, S, parts);
   drawNotation(bar, tb, S, parts);
@@ -295,16 +342,12 @@ function drawSystemHeader(bar: BarBox, tb: TrackBar, S: number, parts: string[])
   }
 }
 
-function drawKeySignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]): void {
-  const fifths = bar.keyFifths ?? 0;
+function drawKeySignatureAt(x0: number, fifths: number, staffTop: number, S: number, parts: string[], isBass = false): void {
   const isSharp = fifths > 0;
-  const midis = isSharp ? KEY_SIG_SHARP : KEY_SIG_FLAT;
-  const count = Math.min(Math.abs(fifths), 7);
-  const x0 = bar.x0 + S * 4.7;
-  for (let i = 0; i < count; i++) {
-    const midi = midis[i] ?? 71;
-    const pos = staffPos(midi, true);
-    const y = tb.staffTop + S * 2 - pos * (S / 2);
+  const positions = keySigPositions(fifths, isBass);
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[i] ?? 0;
+    const y = staffTop + S * 2 - pos * (S / 2);
     parts.push(
       glyph(isSharp ? G.accidentalSharp : G.accidentalFlat, x0 + i * S * 0.95, y, {
         size: S * 2.7,
@@ -313,6 +356,42 @@ function drawKeySignature(bar: BarBox, tb: TrackBar, S: number, parts: string[])
       }),
     );
   }
+}
+
+/**
+ * Key-signature CHANGE at a measure: the new signature right after the
+ * barline. A change to a signature with no sharps/flats is cancelled with
+ * naturals at the old slots first (required by the notation standard).
+ */
+function drawKeyChangeAt(
+  x0: number,
+  fifths: number,
+  prevFifths: number,
+  staffTop: number,
+  S: number,
+  parts: string[],
+  isBass = false,
+): void {
+  if (fifths === 0 && prevFifths !== 0) {
+    const positions = keySigPositions(prevFifths, isBass);
+    for (let i = 0; i < positions.length; i++) {
+      const pos = positions[i] ?? 0;
+      const y = staffTop + S * 2 - pos * (S / 2);
+      parts.push(
+        glyph(G.accidentalNatural, x0 + i * S * 0.95, y, {
+          size: S * 2.7,
+          anchor: "middle",
+          cls: "stdb-key-accidental",
+        }),
+      );
+    }
+    return;
+  }
+  drawKeySignatureAt(x0, fifths, staffTop, S, parts, isBass);
+}
+
+function drawKeySignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]): void {
+  drawKeySignatureAt(bar.x0 + S * 4.7, bar.keyFifths ?? 0, tb.staffTop, S, parts, tb.track.clef === "f4");
 }
 
 /**
@@ -328,9 +407,12 @@ function drawTimeSignature(bar: BarBox, tb: TrackBar, S: number, parts: string[]
   const num = String(ts.numerator);
   const den = String(ts.denominator);
   const block = Math.max(num.length, den.length) * digitW;
+  const kc = bar.keyChangeAt;
+  const keyCount = kc ? (kc.fifths === 0 ? Math.abs(kc.prevFifths) : Math.abs(kc.fifths)) : 0;
+  const keyWidth = kc ? keyCount * S * 0.95 + S * 0.8 : 0;
   const x = bar.systemStart
     ? bar.x0 + S * 4.7 + Math.abs(bar.keyFifths ?? 0) * S * 0.95 + S * 0.7
-    : bar.x0 + S * 1.1;
+    : bar.x0 + S * 1.1 + keyWidth;
   const numX = x + (block - num.length * digitW) / 2;
   const denX = x + (block - den.length * digitW) / 2;
   for (let i = 0; i < num.length; i++) {
@@ -667,7 +749,7 @@ function drawTabNumbers(bar: BarBox, tb: TrackBar, parts: string[]): void {
 // ---------------------------------------------------------------------------
 
 export interface MarkerHitArea {
-  readonly action: "edit-time-sig" | "edit-tempo";
+  readonly action: "edit-time-sig" | "edit-tempo" | "edit-title" | "edit-author";
   readonly barIndex: number;
   readonly x: number;
   readonly y: number;
@@ -686,6 +768,13 @@ export function markerHitAreas(layout: LayoutDocument): MarkerHitArea[] {
   const areas: MarkerHitArea[] = [];
 
   if (layout.hasHeader) {
+    // editable title / author — the hit band hugs the drawn label width
+    // (centered in the header), not the full page width
+    const cx = layout.width / 2;
+    const titleW = Math.max(80, layout.score.title.length * 27 * 0.55);
+    const authorW = Math.max(60, layout.score.artist.length * 14 * 0.56);
+    areas.push({ action: "edit-title", barIndex: 0, x: cx - titleW / 2 - 10, y: 14, w: titleW + 20, h: 42 });
+    areas.push({ action: "edit-author", barIndex: 0, x: cx - authorW / 2 - 10, y: 54, w: authorW + 20, h: 28 });
     const mark = headerTempoMark(layout);
     if (mark) {
       const barIndex = layout.score.bars.findIndex((b) => b.tempo !== null);
