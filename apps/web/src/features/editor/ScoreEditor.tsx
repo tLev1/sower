@@ -5,6 +5,12 @@ import { SheetMenu, type SheetMenuState } from "./SheetMenu";
 import { HumControls } from "../input/HumControls";
 import { useHumInput } from "../input/useHumInput";
 import { useShortcut } from "../../services/useShortcut";
+import {
+  effectiveBinding,
+  formatBinding,
+  shortcutDef,
+  type ShortcutOverrides,
+} from "../../services/shortcuts";
 import type { useEditor } from "./useEditor";
 import type { SowerEngine } from "@sower/render";
 import type { Score, ScoreDocument } from "@sower/core";
@@ -124,11 +130,7 @@ export function ScoreEditor({ score, caret, editor, renderer, doc }: ScoreEditor
           onToggle={hum.toggle}
           onModeChange={hum.setMode}
         />
-        <span className="hint">
-          Click a beat · B writes rests · 0-9 frets · value palette sets note length · drag a note to
-          re-pitch, drag its right edge to resize · Hum sings corrections · Right-click/long-press for
-          tempo, meter & measures · Ctrl+Z undo · Space play
-        </span>
+        <span className="hint">{shortcutHint(editor.shortcuts)}</span>
         <span className="strings">
           {stringLabels.map((midi, i) => (
             <span key={i} className={i === caret.stringIndex ? "string active" : "string"}>
@@ -163,4 +165,22 @@ export function ScoreEditor({ score, caret, editor, renderer, doc }: ScoreEditor
 function midiName(midi: number): string {
   const names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
   return `${names[midi % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+/**
+ * The status hint names the keys the user actually has — it follows the
+ * shortcut registry, so a rebind shows up here without any extra wiring.
+ */
+function shortcutHint(overrides: ShortcutOverrides): string {
+  const key = (id: string, fallback: string): string => {
+    const def = shortcutDef(id);
+    return def ? formatBinding(effectiveBinding(def, overrides)) : fallback;
+  };
+  return (
+    "Click a beat · 0-9 frets · value palette sets note length · " +
+    `drag a note to re-pitch, drag its right edge to resize · ` +
+    `${key("entry.rest", "B")} writes rests · ${key("input.hum", "H")} sings corrections · ` +
+    `right-click/long-press for tempo, meter & measures · ${key("edit.undo", "Ctrl+Z")} undo · ` +
+    `${key("transport.playPause", "Space")} play · ${key("app.shortcuts", "Ctrl+/")} keys`
+  );
 }

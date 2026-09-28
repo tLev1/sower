@@ -81,11 +81,10 @@ const stored = await page.evaluate(() => localStorage.getItem("sower.shortcuts.v
 check("the rebind is persisted", stored.includes('"entry.rest":"N"'), stored);
 
 // ---- 3. the new binding drives the editor ---------------------------------
-await page.keyboard.press("Escape");
-await page.waitForTimeout(200);
 const before = await page.evaluate(() => window.__sowerDoc.score.bars[0].voices[0].rests ?? []);
 await page.locator(".settings-actions .tool-btn", { hasText: "Close" }).click();
 await page.waitForTimeout(250);
+check("the Close button dismisses the panel", (await panelOpen()) === false);
 // caret is at bar 1 / step 1 — N should now write a rest there
 await page.keyboard.press("KeyN");
 await page.waitForTimeout(350);
@@ -126,8 +125,6 @@ await page.keyboard.press("Escape");
 await page.waitForTimeout(150);
 
 // ---- 6. per-row + global reset --------------------------------------------
-await page.keyboard.press("Escape");
-await page.waitForTimeout(150);
 await page.evaluate(() => {
   const row = [...document.querySelectorAll(".settings-row")].find(
     (r) => r.querySelector(".settings-label")?.textContent === "Write a rest",
@@ -160,6 +157,11 @@ await page.waitForTimeout(2200);
 await page.locator(".tool-btn", { hasText: "Keys" }).click();
 await page.waitForTimeout(300);
 check("rebinds survive a reload", (await bindingFor("Staccato")) === "T", await bindingFor("Staccato"));
+
+// ---- 8. Escape dismisses the panel (not while recording) ------------------
+await page.keyboard.press("Escape");
+await page.waitForTimeout(250);
+check("Escape closes the panel", (await panelOpen()) === false);
 
 console.log("\n" + PASS.concat(FAIL).join("\n"));
 console.log(`\n${PASS.length} passed, ${FAIL.length} failed`);

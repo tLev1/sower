@@ -3,6 +3,13 @@ import type { SowerEngine } from "@sower/render";
 import { G } from "@sower/render";
 import { tempoMarkAt, TICKS_PER_QUARTER, type Score } from "@sower/core";
 import { durationIsDotted, durationValueOfTicks } from "../editor/caret";
+import { currentBindings, effectiveBinding, formatBinding, shortcutDef } from "../../services/shortcuts";
+
+/** The key currently bound to a shortcut — used for hover tooltips. */
+function keyFor(id: string): string {
+  const def = shortcutDef(id);
+  return def ? formatBinding(effectiveBinding(def, currentBindings())) : "";
+}
 
 interface TransportBarProps {
   renderer: SowerEngine | null;
@@ -75,6 +82,7 @@ export function TransportBar({
         }}
         disabled={!renderer}
         aria-label={playing ? "Pause" : "Play"}
+        title={playing ? `Pause (${keyFor("transport.playPause")})` : `Play (${keyFor("transport.playPause")})`}
       >
         {playing ? "⏸" : "▶"}
       </button>
@@ -85,6 +93,7 @@ export function TransportBar({
         }}
         disabled={!renderer}
         aria-label="Stop"
+        title="Stop"
       >
         ■
       </button>
@@ -117,10 +126,22 @@ export function TransportBar({
         </svg>
       </button>
       <div className="divider" />
-      <button className="tool-btn" onClick={onUndo} disabled={!canUndo} aria-label="Undo">
+      <button
+        className="tool-btn"
+        onClick={onUndo}
+        disabled={!canUndo}
+        aria-label="Undo"
+        title={`Undo (${keyFor("edit.undo")})`}
+      >
         Undo
       </button>
-      <button className="tool-btn" onClick={onRedo} disabled={!canRedo} aria-label="Redo">
+      <button
+        className="tool-btn"
+        onClick={onRedo}
+        disabled={!canRedo}
+        aria-label="Redo"
+        title={`Redo (${keyFor("edit.redo")})`}
+      >
         Redo
       </button>
       <div className="divider" />

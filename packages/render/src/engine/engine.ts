@@ -214,6 +214,7 @@ export class SowerEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     window.removeEventListener("pointermove", this.handleDragMove);
     window.removeEventListener("pointerup", this.handleDragUp);
     window.removeEventListener("pointercancel", this.handleDragCancel);
+    window.removeEventListener("keydown", this.handleDragKey);
     this.player.dispose();
     this.wrapper?.remove();
     this.wrapper = null;
@@ -552,19 +553,20 @@ export class SowerEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     const r = 10.5;
     const spacing = 2 * r + 8;
     const multiple = layout.score.bars.length > 1;
+    const theme = engravingTheme;
     const buttons: string[] = [];
     const draw = (cx: number, label: string, action: string, accent: string): string =>
       `<g data-stdb-action="${action}" class="stdb-bar-btn">` +
       `<rect class="stdb-btn-bg" x="${round2(cx - r)}" y="${round2(cy - r)}" width="${round2(2 * r)}" height="${round2(2 * r)}" rx="${r}"` +
-      ` fill="#1c2330" stroke="#2a3342" stroke-width="1" />` +
+      ` fill="${theme.panelColor}" stroke="${theme.panelBorderColor}" stroke-width="1" />` +
       `<text x="${round2(cx)}" y="${round2(cy + 5)}" font-family="Inter Variable, Inter, sans-serif" font-size="15"` +
       ` font-weight="600" fill="${accent}" text-anchor="middle">${label}</text></g>`;
     let cx = lastBar.x1 + 14 + r;
     if (multiple) {
-      buttons.push(draw(cx, "−", "remove-bar", "#8b95a8"));
+      buttons.push(draw(cx, "−", "remove-bar", theme.mutedColor));
       cx += spacing;
     }
-    buttons.push(draw(cx, "+", "add-bar", "#4f8cff"));
+    buttons.push(draw(cx, "+", "add-bar", theme.caretColor));
     return buttons.join("");
   }
 
@@ -626,6 +628,7 @@ export class SowerEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
       window.addEventListener("pointermove", this.handleDragMove);
       window.addEventListener("pointerup", this.handleDragUp);
       window.addEventListener("pointercancel", this.handleDragCancel);
+      window.addEventListener("keydown", this.handleDragKey);
       return;
     }
     if (event.pointerType === "touch" && event.isPrimary) this.armLongPress(event);
@@ -727,6 +730,7 @@ export class SowerEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     window.removeEventListener("pointermove", this.handleDragMove);
     window.removeEventListener("pointerup", this.handleDragUp);
     window.removeEventListener("pointercancel", this.handleDragCancel);
+    window.removeEventListener("keydown", this.handleDragKey);
     this.clearDragPreview();
     this.container.style.cursor = "";
     if (moved && proposal) {
@@ -745,12 +749,20 @@ export class SowerEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
     this.cancelDrag(false);
   };
 
+  /** Escape aborts a drag without applying it (premium gesture convention). */
+  private handleDragKey = (event: KeyboardEvent): void => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    this.cancelDrag(false);
+  };
+
   /** Aborts a drag; `silent` skips the cancel event (used on dispose). */
   private cancelDrag(silent: boolean): void {
     const drag = this.drag;
     window.removeEventListener("pointermove", this.handleDragMove);
     window.removeEventListener("pointerup", this.handleDragUp);
     window.removeEventListener("pointercancel", this.handleDragCancel);
+    window.removeEventListener("keydown", this.handleDragKey);
     this.clearDragPreview();
     this.container.style.cursor = "";
     if (!drag) return;
@@ -905,7 +917,7 @@ export class SowerEngine implements ScoreRenderer, ScorePlayer, ScoreInteraction
       const chipY = top - 20;
       parts.push(
         `<rect x="${round2(edgeX - chipW / 2)}" y="${round2(chipY)}" width="${round2(chipW)}" height="19" rx="9.5"` +
-          ` fill="#11151c" stroke="${theme.caretColor}" stroke-width="1" opacity="0.95" />` +
+          ` fill="${theme.panelDeep}" stroke="${theme.caretColor}" stroke-width="1" opacity="0.95" />` +
           `<text x="${round2(edgeX)}" y="${round2(chipY + 13.5)}" font-family="Inter Variable, Inter, sans-serif"` +
           ` font-size="12" font-weight="600" fill="${theme.caretColor}" text-anchor="middle">${label}</text>`,
       );

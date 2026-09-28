@@ -41,6 +41,7 @@ export function ShortcutsPanel({
   useEffect(() => {
     if (!open) {
       setRecording(null);
+      setError(null);
       return;
     }
     if (recording === null) return;
@@ -81,6 +82,20 @@ export function ShortcutsPanel({
     },
     [overrides, onChange],
   );
+
+  // Escape closes the panel (the recorder above claims it first while active)
+  useEffect(() => {
+    if (!open || recording !== null) return;
+    const listener = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", listener);
+    return () => {
+      window.removeEventListener("keydown", listener);
+    };
+  }, [open, recording, onClose]);
 
   if (!open) return null;
 

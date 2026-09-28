@@ -38,7 +38,8 @@ tracked as the parity track in `docs/ROADMAP.md`.
 | Rendering | **Sower engine (in-house)** — SVG + Bravura SMuFL | `packages/render/src/engine`; alphaTab removed (ADR-003) |
 | Playback | WebAudio Karplus-Strong synth (v1) | articulation-aware; sample engines plug in via SynthEngine seam later |
 | Fonts | Bravura (public/fonts), Inter Variable + JetBrains Mono Variable (fontsource) | music glyphs + UI/mono type |
-| Tests | Vitest 3 | 75 tests green (41 core + 22 render + 12 web) |
+| Tests | Vitest 3 | 152 tests green (63 core + 18 audio + 36 render + 35 web) |
+| Pitch detection | YIN in pure TS (`@sower/audio`), AudioWorklet capture | hum/sing correction; a WASM port can replace the detector behind the same seam |
 | Lint | ESLint flat config, typescript-eslint strictTypeChecked | `any` is an error; `scripts/` ignored |
 | CI | `.github/workflows/ci.yml` | lint → typecheck → test → build |
 | E2E/inspection | Playwright with `channel: "msedge"` | **chromium headless-shell spawn is blocked on this machine** — always launch Edge |
@@ -49,41 +50,58 @@ tracked as the parity track in `docs/ROADMAP.md`.
 C:\dev\stdBd
 ├── apps/web/                  React app (composition only)
 │   └── src/
-│       ├── App.tsx            wires document + engine + editor + transport;
-│       │                      prewarms audio on the first user gesture
+│       ├── App.tsx            wires document + engine + editor + transport +
+│       │                      shortcuts panel; prewarms audio on first gesture
 │       ├── features/editor/   caret.ts (pure nav logic + duration helpers +
 │       │                      tests), useEditor.ts (state + keymap + click
-│       │                      handling + entry duration + measure ops),
-│       │                      ScoreEditor.tsx (canvas + status bar),
-│       │                      DurationPicker.tsx, SheetMenu.tsx (context
-│       │                      menu + tempo/meter popovers)
+│       │                      handling + entry duration + measure ops + note
+│       │                      drag commands), ScoreEditor.tsx (canvas + status
+│       │                      bar + hum controls), DurationPicker.tsx,
+│       │                      SheetMenu.tsx (context menu + tempo/meter popovers)
+│       ├── features/input/    HumControls.tsx + useHumInput.ts (hum/sing
+│       │                      capture → editor commands, Correct/Enter modes)
+│       ├── features/settings/ ShortcutsPanel.tsx (rebind UI)
 │       ├── features/playback/TransportBar.tsx (unit-aware tempo display)
-│       ├── services/score-store.ts   IndexedDB load/save + debounced autosave
+│       ├── services/          score-store.ts (IndexedDB autosave),
+│       │                      shortcuts.ts (THE shortcut registry + binding
+│       │                      store + resolver, 22 tests), useShortcut.ts
 │       ├── demo/demoScore.ts  2-bar Em pentatonic demo (initial document)
-│       └── styles/global.css  dark theme, tokens as CSS vars, Bravura @font-face
+│       └── styles/global.css  dark theme, tokens as CSS vars, Bravura
+│                              @font-face, reduced-motion + focus ring
 ├── packages/core/             PURE domain — zero dependencies
 │   └── src/
 │       ├── model/score.ts     Score/Track/Bar/Voice/Note, branded ids, 480 tpq,
 │       │                      Bar.tempoUnit (notated beat unit)
 │       ├── commands/          commands.ts (pure applyCommand), score-document.ts
 │       └── operations/        tempoMarkAt/quarterBpmOf/tempoAtBar, barStartTime,
-│                              validateBar, id allocator
+│                              barStartTick/locateTick, validateBar, id allocator,
+│                              chords.ts (key-aware chord map + voicings),
+│                              fingering.ts (bestFingering, snapDuration,
+│                              STANDARD_DURATIONS, durationLabel),
+│                              hum.ts (quantizeHumNotes, humCorrectionPitch)
 ├── packages/render/           ScoreRenderer + ScorePlayer + ScoreInteraction
 │   └── src/engine/            THE ENGINE (in-house, since ADR-003):
 │       ├── layout.ts          pure Score → geometry (systems/bars/beats,
-│       │                      hit-testing, caret/playhead anchors) — tested
+│       │                      hit-testing, caret/playhead anchors, NOTE
+│       │                      HANDLES: noteBodies/noteEdges/noteHandleAt,
+│       │                      durationEdgeX) — tested
 │       ├── engraving.ts       layout → inline SVG (Bravura glyphs, TAB staff,
 │       │                      beams, rests, header, metronome tempo marks)
 │       │                      + markerHitAreas for the editable marks
 │       ├── engine.ts          SowerEngine: mount/load/positionAt/setCaret/
 │       │                      setPlayhead/onPositionChanged/prewarm,
-│       │                      sheet-marker clicks, context menu (right-click
-│       │                      + touch long-press), dispose
+│       │                      sheet-marker clicks, context menu, note drag
+│       │                      session (pitch/duration + live ghost preview),
+│       │                      hover affordances, dispose
 │       ├── player.ts          WebAudioPlayer (Karplus-Strong, tempo map with
 │       │                      beat units, lookahead scheduler, prewarm)
 │       ├── smufl.ts           SMuFL codepoints (Bravura, incl. metronome marks)
 │       └── theme.ts           engraving colors from @sower/ui tokens
-├── packages/audio/            SynthEngine + LatencyProbe contracts (no impl yet)
+│                              (engine overlays read this, never hardcode)
+├── packages/audio/            SynthEngine + LatencyProbe contracts,
+│   └── src/                   pitch.ts (YIN detector + PitchStream +
+│                              segmentHumNotes, 18 tests),
+│                              hum-input.ts (mic + AudioWorklet capture)
 ├── packages/ui/               design tokens (colors/motion/spacing + liveInput budgets)
 ├── scripts/
 │   ├── inspect-page.mjs       dev page in headless Edge: console errors, DOM, screenshot
@@ -95,6 +113,10 @@ C:\dev\stdBd
 │   │                          note-length sustain (alphaTab semantics),
 │   │                          BPM scaling + live edits, sheet-following metronome
 │   ├── probe-sheet-v3.mjs     title/author, key signature, chord sheets, deletion model
+│   ├── probe-drag.mjs         direct manipulation: drag pitch + drag duration edge (1c.1)
+│   ├── probe-hum.mjs          hum/sing input end-to-end with a synthetic mic (1c.2)
+│   ├── probe-shortcuts.mjs    shortcuts config page: rebind/conflict/reset (1c.3)
+│   ├── probe-keymap.mjs       keymap regression through the shortcut registry
 │   ├── visual-sower.mjs       screenshot: chord symbol + key change
 │   ├── visual-v2.mjs          screenshots: tempo popover, 7/8 sheet, context menu
 │   ├── probe-sync.mjs         playhead continuity sampling (frozen-frame / jump detector)
@@ -114,12 +136,16 @@ pnpm install
 pnpm dev                 # Vite dev server → http://localhost:5173
 pnpm lint                # ESLint (root, flat config)
 pnpm typecheck           # tsc --noEmit per package
-pnpm test                # Vitest, all packages (46 tests)
+pnpm test                # Vitest, all packages (152 tests)
 pnpm build               # typecheck + vite build
 node scripts/inspect-page.mjs     # with dev server running; screenshot → C:\dev\temp\opencode\page.png
 node scripts/interact-test.mjs    # interaction regression (uses real mouse/keys)
 node scripts/probe-sheet-v2.mjs   # instant-play latency + sheet editing batch (28 checks)
 node scripts/probe-playhead-v3.mjs # playhead-at-selection, carry-over notes, rest fill, mid-system meter change
+node scripts/probe-drag.mjs       # Phase 1c.1 — drag pitch + drag duration edge (13 checks)
+node scripts/probe-hum.mjs        # Phase 1c.2 — hum/sing input with a synthetic mic (9 checks)
+node scripts/probe-shortcuts.mjs  # Phase 1c.3 — shortcuts config page (17 checks)
+node scripts/probe-keymap.mjs     # keymap regression through the shortcut registry (11 checks)
 ```
 
 Git repo on `main`; commit as you go (conventional commits).
@@ -315,6 +341,69 @@ Git repo on `main`; commit as you go (conventional commits).
   core; the id allocator seeds from the score and re-syncs on reset (avoids
   id collisions with loaded data — removeBar used to delete two bars).
 
+### Phase 1b — Notation + articulations (mostly complete)
+
+- **Shipped**: note-value palette + `setNoteDuration`, rest entry (`B`),
+  note-length editing with measure re-adjustment, key signature editing
+  (15 keys × major/minor), chord sheets (symbol + playable voicings),
+  editable title/author, simple articulations (M/S/R/G/A — palm mute,
+  staccato, let-ring, ghost, accent; engraved + honoured in playback).
+- **Still open in Phase 1b**: tuplets, expression articulations (bend, slide,
+  hammer-on/pull-off, vibrato, harmonics, ties — the data model already has
+  the `Articulation` kinds, the engraver draws none of them), notation-only
+  view toggle, and the import/export trio (MusicXML, MIDI, PDF / GP3-7).
+
+### Phase 1c — Flagship UX (complete)
+
+- **Direct note manipulation** (`noteHandleAt` in layout.ts + a drag session
+  in engine.ts). Two handles per note: its **body** (tab fret number /
+  notation notehead — vertical drag = pitch, horizontal drag = duration) and
+  its **duration edge** (a grip at the right of the note's rhythmic column).
+  - *Pitch drag*: whole semitones (`PX_PER_SEMITONE = 5`), then
+    `bestFingering(tuning, pitch, preferString)` re-fingers it — keeps the
+    string while the fret fits, otherwise the most economical position.
+  - *Duration edge drag*: snaps to `STANDARD_DURATIONS` (32nd → dotted whole)
+    by whichever value's drawn edge lands nearest the pointer, clamped to the
+    next written event (never overwrites later notes — the owner's spec).
+  - The edge lives at the **column boundary**, not at the next note's body —
+    that is what keeps both a note's body and the previous note's edge
+    grabbable at the same time.
+  - `durationEdgeX` uses the engraver's sqrt spacing WITHOUT its minimum
+    width floor, so every rhythm value has a distinct edge position (16ths
+    and 32nds are individually addressable).
+  - Live preview: ghost fret + ghost notehead + guide line (pitch), tinted
+    band + edge line + value chip (duration). Axis lock after 4 px. Escape
+    cancels. One undo entry per gesture (commands fire on release only).
+- **Hum / sing correction** (`@sower/audio`).
+  - `yinFrame` — YIN detector (difference function → CMNDF → absolute
+    threshold → parabolic interpolation). Pure and deterministic; tested
+    against synthetic sines. A WASM port can replace it behind the same shape.
+  - `PitchStream` — block-agnostic framing (window 2048 / hop 256) with its
+    own sample clock, so chunking never changes the result.
+  - `segmentHumNotes` — bridges short consonant gaps, splits on held pitch
+    changes, merges vibrato/wobble (trimmed-mean pitch), drops sub-80 ms blips.
+  - `HumInput` — mic capture via an AudioWorklet (Blob-URL module, 1024-sample
+    batches posted off the audio thread) with an AnalyserNode fallback.
+  - Two editor modes: **Correct** (sing the pitch the selected note should
+    have → `setNotePitch`) and **Enter** (hum a phrase → `quantizeHumNotes`
+    snaps onsets to the entry grid and lengths to standard rhythms, written
+    from the caret across bar lines via `barStartTick`/`locateTick`).
+- **Keyboard shortcuts** (`apps/web/src/services/shortcuts.ts`).
+  - `SHORTCUTS` is THE registry (29 defs, 7 groups). Adding a shortcut = one
+    entry there; it automatically appears in the settings page and becomes
+    rebindable. `useShortcut(id, handler)` wires a handler to a registered id.
+  - Bindings key off `KeyboardEvent.code` (never `key`) so modifiers are
+    predictable: `Shift+Digit1` is "1 with shift", never "!".
+  - Live binding store (`currentBindings`/`setBindings`/`subscribeBindings`),
+    persisted to `localStorage["sower.shortcuts.v1"]`, with a conflict finder.
+  - `ShortcutsPanel` — grouped list, click-to-rebind recording (a bare
+    modifier press is ignored; Escape cancels), per-row reset, reset-all,
+    clashes refused with a message, Escape closes the panel.
+  - The editor dispatches by resolved id (`fret.N`, `entry.rest`,
+    `artic.*`, `nav.*`, `edit.*`, `transport.playPause`, `app.shortcuts`).
+    The two-digit fret entry stays rebindable: while pending, ANY digit
+    shortcut completes it (so the tens chord can be repeated).
+
 ## 5b. Engine architecture notes (for future work)
 
 - Layout is a pure function: `computeLayout(score, {width})` →
@@ -445,10 +534,61 @@ Git repo on `main`; commit as you go (conventional commits).
     fresh headless Edge page takes ~600 ms; `probe-sheet-v2.mjs` does a
     warm-up play first, mirroring real usage where `prewarm()` runs on the
     first user gesture.
+13. **A bare modifier keydown must never cancel in-progress input**. The
+    two-digit fret entry was silently dying on the `Control` keydown of its
+    own chord (`Ctrl+1` … `Ctrl+2` → the second `Ctrl+2` reset the pending
+    state instead of completing it). `handleKeyDown` returns early for
+    `ControlLeft/Right`, `ShiftLeft/Right`, `AltLeft/Right`, `MetaLeft/Right`.
+    Test it whenever the keymap changes (`probe-keymap.mjs`).
+14. **Duration edges and note bodies collide geometrically**. A note's
+    notated end is exactly where the NEXT notehead sits, so an edge handle
+    drawn at `xAtTick(start + duration)` is unreachable by mouse. The edge
+    grip lives at the note's **rhythmic column boundary** instead
+    (`durationEdgeX` = `left + naturalBeatSpan(d) * scale`), which is clear of
+    the neighbouring head. Do not "simplify" it back to `xAtTick`.
+15. **`beatWidth` has a minimum-width floor** that collapses 16ths/32nds/
+    dotted-16ths into one visual width. Fine for engraving, but any geometry
+    that must distinguish rhythm values (drag snapping, previews) has to use
+    `naturalBeatSpan` (the same sqrt scale, no floor).
+16. **The user's bindings live in `localStorage["sower.shortcuts.v1"]`** and
+    are cached in `currentBindings()`. Anything that needs the live chord for
+    a shortcut must go through `effectiveBinding(def, currentBindings())` —
+    never re-read `SHORTCUTS[].binding` directly, or a rebind will not show.
+    Use `useShortcut(id, handler)` for the same reason.
+17. **A fake `MediaStream` is dead after the first capture** —
+    `HumInput.stop()` stops the stream's tracks (correctly, so the mic is not
+    left open). A fake `getUserMedia` must return a FRESH stream per call
+    (`probe-hum.mjs` does this).
+18. **Never edit a UTF-8 source file through PowerShell `Get-Content` /
+    `Set-Content`** on this machine: the round trip double-encodes the
+    non-ASCII characters (em dashes, arrows) and adds a BOM. Use the editor
+    tools, or `[System.IO.File]::ReadAllText/WriteAllText` with
+    `UTF8Encoding($false)`.
 
 ## 7. Verification status (last run: all green)
 
-- lint / typecheck / 56 unit tests / production build
+- lint / typecheck / 152 unit tests / production build
+- **Direct manipulation** (`probe-drag.mjs`, 13/13): vertical drag re-pitches
+  by whole semitones and re-fingers (55 → 59 = string 2 fret 4); the whole
+  gesture is one undo entry; a small edge nudge steps to the neighbouring
+  rhythm value (480 → 360), a long drag shortens (→ 60) and grows back
+  (→ 480) while never passing the next note; the last note of a measure grows
+  freely (480 → 1440) and still snaps to a standard value; a plain click on a
+  body just places the caret; an edge drag never changes the pitch
+- **Hum / sing input** (`probe-hum.mjs`, 9/9, synthetic mic): the control
+  arms the capture; the live read-out hears A3 and the level meter moves;
+  Correct mode re-pitches the selected note to the sung pitch (55 → 57) in a
+  single undo entry; Enter mode writes a quantised note from the caret
+  (`{start:0, duration:960, pitch:57, fret:2}`)
+- **Shortcuts page** (`probe-shortcuts.mjs`, 17/17): 29 rows in 7 groups with
+  the correct defaults; click-to-rebind records and persists to localStorage;
+  the rebound key drives the editor and the old key stops firing; a clashing
+  chord is refused with a message and the row stays in recording mode;
+  per-row reset and reset-all restore the defaults and clear storage;
+  rebinds survive a reload; Escape closes the panel
+- **Keymap regression** (`probe-keymap.mjs`, 11/11): digit entry + auto
+  advance, Ctrl+1 two-digit entry, the repeated tens chord (Ctrl+2, Ctrl+2 →
+  fret 22), rests, M/S articulation toggles, Delete beat, Ctrl+Z / Ctrl+Shift+Z
 - Player correctness (`probe-player.mjs`, 9/9): first note audible 26 ms
   after play from a late-bar selection; notes sound their full notated length
   on a pitch-independent 2.00 s sustain ring with a ~120 ms release; eighths
@@ -499,29 +639,34 @@ Git repo on `main`; commit as you go (conventional commits).
 
 1. **Incremental re-render (top priority)**: currently every edit recomputes
    the full layout + SVG string. Fast, but a bar-local layout cache (dirty
-   bar → re-render that bar's group only) makes it feel even snappier for
+   bar -> re-render that bar group only) makes it feel even snappier for
    long scores.
-2. **Triplets / tuplet entry**: durations cover dotted values 32nd–whole;
-   tuplet grouping (3:2 etc.) still needs a dedicated entry mode and
-   engraving support.
-3. **Articulation editing + rendering**: palm-mute (PM), bends, slides,
-   vibrato, harmonics, ties — the data model has them; the engraver draws
-   none of them yet and the editor has no input controls for them.
-4. **Notes overflowing a narrowed meter** stay in the model but are ignored
+2. **Triplets / tuplet entry** (Phase 1b leftover): durations cover dotted
+   values 32nd-whole; tuplet grouping (3:2 etc.) still needs a tuplet model,
+   a dedicated entry mode and engraving support.
+3. **Expression articulations** (Phase 1b leftover): bend, slide,
+   hammer-on/pull-off, vibrato, harmonics, ties. The data model already has
+   the `Articulation` kinds; the engraver draws none of them and the editor
+   has no input controls. Engraver marks first (bend arrows, slurs, vibrato
+   wavy line, tie arcs), then input.
+4. Phase 1b leftovers: notation-only view toggle (engine renders one staff
+   per track), then the import/export trio - Guitar Pro (.gp3-7), MIDI and
+   MusicXML import; MusicXML, MIDI and PDF (print stylesheet) export.
+5. **Hum input hardening** (1c.2 follow-ups): a WASM port of the YIN
+   detector behind the same seam, live pitch echo on the score while
+   singing, per-device input latency calibration, and a phrase-review strip
+   (see the Phase 3 live-session spec in docs/ARCHITECTURE.md).
+6. **Notes overflowing a narrowed meter** stay in the model but are ignored
    by layout/playback overflow handling (known v1 limit); consider
    re-flowing or flagging affected bars on meter changes.
-5. **Duplicate bars** (completes measure management: add/remove exist,
+7. **Duplicate bars** (completes measure management: add/remove exist,
    duplicate is missing).
-6. Phase 1b: notation-only view toggle (engine renders one staff), Guitar
-   Pro (.gp3-7)/MusicXML/MIDI import, MusicXML/MIDI/PDF export.
-7. Playback v2: per-track mixer (Track model already has volume/pan/mute/
+8. Playback v2: per-track mixer (Track model already has volume/pan/mute/
    solo), better synth voices per instrument family, loop sections, tempo %
    (practice tools per ROADMAP Phase 2).
-8. Phase 1c prototype (timebox 2 weeks): drag-note pitch/duration +
-   hum-a-correction input (monophonic pitch detection, WASM).
 9. Phase 2+: accounts/sync/billing, practice tools, AI (chord-chart
    autopilot first), live session (latency architecture in
-   docs/ARCHITECTURE.md), arranger — per docs/ROADMAP.md.
+   docs/ARCHITECTURE.md), arranger - per docs/ROADMAP.md.
 10. Naming: decide (Adnoto leads), then domain/trademark check + branding.
 
 ## 9. Decisions already made (do not relitigate without reason)

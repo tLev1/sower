@@ -2,7 +2,7 @@
 
 > Name: **Sower** (decided).
 > Solo developer. Web-first (TypeScript/React), packaged for desktop/iPad later.
-> Status snapshot: **Phase 1a complete on the in-house engine** — see §Current
+> Status snapshot: **Phase 1c complete on the in-house engine** — see §Current
 > status. Handover details in `handover.md`, architecture in
 > `docs/ARCHITECTURE.md`, engine decision in `docs/ADRs/003-*`.
 
@@ -22,7 +22,11 @@
 | Playback | ✅ WebAudio v1: Karplus-Strong plucked-string synth, articulation-aware, tempo map, look-ahead scheduler, latency-compensated playhead, fade pause/stop, play-from-selection |
 | Editing | ✅ fret entry 0-9 + two-digit (10-24), chord entry flow, caret navigation, measure +/−, undo/redo, IndexedDB autosave |
 | Transport | ✅ play/pause/stop, editable BPM, meter selector (applies from caret bar) |
-| Missing for Phase 1b | durations UI, articulation editing/rendering, notation-only toggle, import/export |
+| Direct manipulation (1c) | ✅ drag pitch (vertical, semitone snap + re-fingering), drag duration edge (horizontal, standard-rhythm snap), live ghost preview |
+| Hum / sing input (1c) | ✅ YIN pitch detection (AudioWorklet capture), Correct + Enter modes, quantised phrase entry |
+| Shortcuts (1c) | ✅ central registry (29 shortcuts), full rebind UI, conflicts, persistence |
+| Missing for Phase 1b | tuplets, expression articulations (bend/slide/H-P/vibrato/harmonics/ties), notation-only toggle, import/export |
+| Missing for Phase 2+ | accounts/sync, practice tools, playback v2, AI, arranger |
 
 ## Phases
 
@@ -84,14 +88,66 @@
 - [ ] Import: Guitar Pro (.gp3-7), MIDI, MusicXML — converters target the
       core model directly (no alphaTex bridge anymore)
 
-### Phase 1c — Flagship UX (~4 wks, prototype FIRST within this phase)
-- [ ] Direct note manipulation: drag pitch (vertical), drag duration edge (horizontal), snap
-- [ ] Hum/sing/play correction input (monophonic pitch detection, WASM)
-- [ ] Keyboard shortcuts configuration page — let the user rebind every
-      shortcut to taste (e.g. Shift+digit instead of Ctrl+digit for frets
-      10-24, any key for rests/articulations); all future shortcuts register
-      there too
-- [ ] Micro-interaction polish pass against "premium feel" checklist
+### Phase 1c — Flagship UX ✅ (complete — drag, hum/sing, rebindable keys)
+
+> Prototype-first: the two flagship interactions (drag notes + hum/sing) were
+> built and proven before the surrounding polish. Timebox honoured.
+
+- [x] **Direct note manipulation** (prototype FIRST, as agreed)
+  - [x] Drag pitch (vertical) — grab a note body (tab fret number or
+        notation notehead); the pitch moves in whole semitones and the note
+        is re-fingered for the instrument (keeps its string while the fret
+        fits, otherwise the most economical position). Live ghost on both
+        staves + a guide line from the original.
+  - [x] Drag duration edge (horizontal) — grab the grip at the right of a
+        note's rhythmic column, or drag its body sideways (axis-locked after
+        4 px). Snaps to the standard rhythm values (32nd → dotted whole) and
+        is clamped so the gesture never overwrites the notes after it. Live
+        band + a chip showing the value it will take.
+  - [x] Snap — pitch to whole semitones, duration to standard rhythms; every
+        rhythm value maps to a distinct edge position so 16ths/32nds are
+        individually addressable.
+  - [x] One undo entry per gesture, hover affordances (grip / ring),
+        Escape cancels a drag.
+- [x] **Hum / sing / play correction input** (timeboxed prototype)
+  - [x] Monophonic pitch detection — YIN (difference fn + CMNDF + parabolic
+        interpolation) in pure TS behind a `PitchDetector`-shaped seam; a
+        WASM port can replace it without touching the segmenter or the editor.
+  - [x] AudioWorklet capture (1024-sample batches off the audio thread, zero
+        per-sample allocation) with an AnalyserNode fallback; live level +
+        pitch read-out while listening.
+  - [x] **Correct mode** — sing the pitch a note SHOULD have; the selected
+        note is re-pitched (and re-fingered) to it.
+  - [x] **Enter mode** — hum a phrase; onsets snap to the entry grid, note
+        lengths to standard rhythms, written from the caret across bar lines.
+  - [x] Segmentation handles real singing: short consonant gaps are bridged,
+        vibrato resolves to one note (trimmed-mean pitch), sub-80 ms blips
+        are dropped.
+- [x] **Keyboard shortcuts configuration page**
+  - [x] Central registry — every shortcut registers there (29 today), so all
+        future ones are rebindable for free.
+  - [x] Rebind to taste (e.g. Shift+digit instead of Ctrl+digit for frets
+        10-24, any key for rests/articulations); bindings key off the
+        physical `KeyboardEvent.code` so modifiers are predictable.
+  - [x] Click-to-rebind recording, per-row reset, reset-all, conflict
+        surfacing (a clashing chord is refused and reported), persistence
+        across reloads, live rebind (no restart).
+- [x] **Micro-interaction polish pass** against the premium-feel checklist:
+  - [x] One motion family everywhere (120/180/240 ms, `--ease-out`), all
+        timings normalised to the `motion` tokens
+  - [x] `prefers-reduced-motion` collapses every animation/transition
+  - [x] One visible focus ring on every interactive control
+  - [x] Hover/active feedback on all controls (grab ring + edge grip on the
+        score, pressed states on buttons, popover/panel entrances)
+  - [x] Colour discipline: engine overlays read `engravingTheme` (which reads
+        `@sower/ui` tokens) — no hardcoded colours left in the engine
+  - [x] Status-bar hint names the keys the user actually has (follows the
+        shortcut registry and updates on rebind)
+  - [x] Transport tooltips carry their current key binding
+  - [x] Escape is consistent everywhere: cancel a drag, stop recording,
+        close the panel, close a popover
+  - [x] Drag preview + caret/playhead memoised per frame (no layout thrash)
+  - [x] Microcopy/labels/aria on every new control
 
 ### Phase 2 — Product base (~3 wks)
 - [ ] Accounts + cloud sync (Clerk/Supabase), free/Pro tiers, Stripe
