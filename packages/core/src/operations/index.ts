@@ -20,3 +20,15 @@ export {
   voiceChord,
 } from "./chords.js";
 export type { ChordChoice, ChordQuality, ChordVoicing, KeySignature, VoicedNote } from "./chords.js";
+export {
+  MAX_FRET,
+  MIN_NOTE_TICKS,
+  STANDARD_DURATIONS,
+  bestFingering,
+  durationLabel,
+  fretForPitch,
+  maxStandardDuration,
+  openPitchForString,
+  snapDuration,
+} from "./fingering.js";
+export type { Fingering } from "./fingering.js";

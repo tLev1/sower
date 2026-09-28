@@ -3,11 +3,20 @@ import type { Note, Score } from "@sower/core";
 import { STANDARD_GUITAR_TUNING, TICKS_PER_QUARTER } from "@sower/core";
 import {
   beamGroupSize,
+  beatColumnInfo,
   caretAnchor,
   computeLayout,
+  durationEdgeX,
+  findNoteInLayout,
   groupIntoBeats,
+  noteBodies,
+  noteEdges,
+  noteHandleAt,
   playheadAnchorAt,
   positionAt,
+  staffPosForNote,
+  tickAtX,
+  xAtTick,
 } from "../src/engine/layout.js";
 
 function buildScore(): Score {
@@ -416,5 +425,178 @@ describe("caretAnchor", () => {
     const anchor = caretAnchor(layout, 0, 0, 0);
     expect(beat).toBeDefined();
     expect(anchor?.x).toBe(beat?.x);
+  });
+});
+
+describe("xAtTick / tickAtX", () => {
+  const score = buildScore();
+  const layout = computeLayout(score, { width: 1200 });
+
+  it("round-trips tick → x → tick on the beat columns", () => {
+    const bar = layout.systems[0]?.bars[0];
+    if (!bar) return;
+    for (const beat of bar.tracks[0]?.beats ?? []) {
+      expect(tickAtX(bar, xAtTick(bar, beat.start))).toBe(beat.start);
+    }
+  });
+
+  it("round-trips x → tick → x between columns", () => {
+    const bar = layout.systems[0]?.bars[0];
+    const tb = bar?.tracks[0];
+    const b0 = tb?.beats[0];
+    const b1 = tb?.beats[1];
+    if (!bar || !b0 || !b1) return;
+    const x = (b0.x + b1.x) / 2;
+    expect(xAtTick(bar, tickAtX(bar, x))).toBeCloseTo(x, 6);
+  });
+
+  it("glides toward the barline past the last beat (duration edges)", () => {
+    const bar = layout.systems[0]?.bars[0];
+    const tb = bar?.tracks[0];
+    const last = tb?.beats[tb.beats.length - 1];
+    if (!bar || !last) return;
+    const end = xAtTick(bar, 1920);
+    expect(end).toBeGreaterThan(last.x);
+    expect(end).toBeLessThanOrEqual(bar.x1);
+    expect(tickAtX(bar, end)).toBe(1920);
+  });
+});
+
+describe("durationEdgeX", () => {
+  const score = buildScore();
+  const layout = computeLayout(score, { width: 1200 });
+
+  it("lands exactly on the column edge for the beat's own duration", () => {
+    const beat = layout.systems[0]?.bars[0]?.tracks[0]?.beats[0];
+    if (!beat) return;
+    const { left } = beatColumnInfo(layout, beat);
+    expect(durationEdgeX(layout, beat, beat.duration)).toBeCloseTo(left + beat.width, 6);
+    expect(durationEdgeX(layout, beat, beat.duration)).toBeCloseTo(beat.x + beat.width / 2, 6);
+  });
+
+  it("maps every standard rhythm value to a distinct edge (drag snapping)", () => {
+    const beat = layout.systems[0]?.bars[0]?.tracks[0]?.beats[0];
+    if (!beat) return;
+    const values = [60, 90, 120, 180, 240, 360, 480, 720, 960, 1440, 1920, 2880];
+    const xs = values.map((d) => durationEdgeX(layout, beat, d));
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]).toBeGreaterThan(xs[i - 1] ?? 0);
+    }
+  });
+});
+
+describe("note handles (direct manipulation)", () => {
+  const score = buildScore();
+  const layout = computeLayout(score, { width: 1200 });
+
+  it("exposes a body per note on both staves", () => {
+    const bodies = noteBodies(layout);
+    // 16 notes in the demo score, each drawn on the tab AND the notation staff
+    expect(bodies.length).toBe(32);
+    expect(bodies.filter((b) => b.onTab)).toHaveLength(16);
+  });
+
+  it("grabs a note body by its tab fret number", () => {
+    const body = noteBodies(layout).find((b) => b.onTab && b.barIndex === 0 && b.stringIndex === 3);
+    expect(body).toBeDefined();
+    if (!body) return;
+    const hit = noteHandleAt(layout, body.x, body.y);
+    expect(hit?.handle).toBe("body");
+    expect(hit?.noteId).toBe(body.noteId);
+  });
+
+  it("prefers the vertically nearest body inside a chord stack", () => {
+    const bodies = noteBodies(layout).filter((b) => b.onTab && b.barIndex === 0);
+    const first = bodies[0];
+    if (!first) return;
+    const hit = noteHandleAt(layout, first.x, first.y + 2);
+    expect(hit?.noteId).toBe(first.noteId);
+  });
+
+  it("grabs the duration edge at the right of a note's column", () => {
+    const bar = layout.systems[0]?.bars[0];
+    const tb = bar?.tracks[0];
+    const beat = tb?.beats[0];
+    const note = beat?.notes[0];
+    if (!beat || !note) return;
+    const edge = noteEdges(layout).find((e) => e.noteId === note.id);
+    expect(edge).toBeDefined();
+    if (!edge) return;
+    // the edge sits at the column boundary — clear of the next notehead
+    expect(edge.x).toBeGreaterThan(beat.x);
+    const hit = noteHandleAt(layout, edge.x + 3, (edge.top + edge.bottom) / 2);
+    expect(hit?.handle).toBe("edge");
+    expect(hit?.noteId).toBe(note.id);
+  });
+
+  it("gives the duration edge of every note in the bar", () => {
+    const edges = noteEdges(layout).filter((e) => e.barIndex === 0);
+    expect(edges).toHaveLength(8);
+  });
+
+  it("lets a note body win over a neighbouring note's edge", () => {
+    const bodies = noteBodies(layout).filter((b) => b.onTab && b.barIndex === 0);
+    const second = bodies[1];
+    const first = bodies[0];
+    if (!second || !first) return;
+    // dead on the notehead
+    expect(noteHandleAt(layout, second.x, second.y)?.handle).toBe("body");
+    // on the previous note's edge the edge wins instead
+    const prevEdge = noteEdges(layout).find((e) => e.noteId === first.noteId);
+    if (!prevEdge) return;
+    expect(noteHandleAt(layout, prevEdge.x, (prevEdge.top + prevEdge.bottom) / 2)?.handle).toBe("edge");
+    // and back on the notehead again
+    expect(noteHandleAt(layout, second.x + 2, second.y)?.handle).toBe("body");
+  });
+
+  it("keeps a chord stack individually grabbable", () => {
+    const score = buildScore();
+    const bar = score.bars[0];
+    const track = score.tracks[0];
+    if (!bar || !track) return;
+    // a two-note chord on strings 0 and 3 at tick 0
+    const chord: Score = {
+      ...score,
+      bars: [
+        {
+          ...bar,
+          voices: [
+            {
+              notes: [
+                { ...(bar.voices[0]?.notes[0] ?? {}), id: 101 as never, start: 0, duration: 960, string: 0, fret: 3, pitch: 67 } as Note,
+                { ...(bar.voices[0]?.notes[1] ?? {}), id: 102 as never, start: 0, duration: 960, string: 3, fret: 2, pitch: 57 } as Note,
+              ],
+            },
+          ],
+        },
+        ...score.bars.slice(1),
+      ],
+    };
+    const chordLayout = computeLayout(chord, { width: 1200 });
+    const bodies = noteBodies(chordLayout).filter((b) => b.onTab && b.barIndex === 0);
+    expect(bodies).toHaveLength(2);
+    const [low, high] = bodies;
+    if (!low || !high) return;
+    expect(noteHandleAt(chordLayout, low.x, low.y)?.noteId).toBe(low.noteId);
+    expect(noteHandleAt(chordLayout, high.x, high.y)?.noteId).toBe(high.noteId);
+  });
+
+  it("resolves a note back from the layout for drag proposals", () => {
+    const body = noteBodies(layout)[0];
+    if (!body) return;
+    const found = findNoteInLayout(layout, body.barIndex, body.noteId);
+    expect(found?.note.id).toBe(body.noteId);
+    expect(found?.beat).toBeDefined();
+  });
+
+  it("positions pitch previews on the tab string line", () => {
+    const bar = layout.systems[0]?.bars[0];
+    const tb = bar?.tracks[0];
+    if (!tb) return;
+    // string 3 at fret 2 → pitch 57 lands on string 3's line
+    const y = noteBodies(layout).find((b) => b.onTab && b.stringIndex === 3 && b.fret === 2)?.y;
+    expect(y).toBe(tb.tabTop + 3 * layout.tabLineGap);
+    // written A4 (57 + 12) sits one staff step below the treble middle line
+    expect(staffPosForNote(57, true)).toBe(-1);
   });
 });

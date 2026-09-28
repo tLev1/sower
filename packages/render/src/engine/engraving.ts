@@ -1,7 +1,7 @@
 import type { Note } from "@sower/core";
 import { TICKS_PER_QUARTER } from "@sower/core";
 import type { BarBox, LayoutDocument, TrackBar } from "./layout.js";
-import { durationClass, keyAlteredPcs, type DurationClass } from "./layout.js";
+import { durationClass, keyAlteredPcs, staffPosForNote, type DurationClass } from "./layout.js";
 import { G, MUSIC_FONT } from "./smufl.js";
 import { engravingTheme } from "./theme.js";
 
@@ -24,19 +24,9 @@ function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-const SEMI_TO_STEP: readonly number[] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
-/** Diatonic index of written B4 â€” the middle line of the treble staff. */
-const B4_STEP = 41;
-
-function diatonicStep(midi: number): number {
-  const pc = ((midi % 12) + 12) % 12;
-  return Math.floor(midi / 12) * 7 + (SEMI_TO_STEP[pc] ?? 0);
-}
-
 /** Half-steps above the middle staff line (positive = higher); guitar written +12. */
 function staffPos(midi: number, isGuitar: boolean): number {
-  const written = isGuitar ? midi + 12 : midi;
-  return diatonicStep(written) - B4_STEP;
+  return staffPosForNote(midi, isGuitar);
 }
 
 /** Written MIDI notes of key-signature accidentals, in order (treble octave). */

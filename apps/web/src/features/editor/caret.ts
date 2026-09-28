@@ -1,5 +1,5 @@
 import type { Bar, Note, Rest, Score } from "@sower/core";
-import { TICKS_PER_QUARTER, ticksPerBar } from "@sower/core";
+import { MAX_FRET, TICKS_PER_QUARTER, ticksPerBar } from "@sower/core";
 
 /**
  * Keyboard-first caret over the score grid.
@@ -8,8 +8,8 @@ import { TICKS_PER_QUARTER, ticksPerBar } from "@sower/core";
  */
 export const GRID_TICKS = TICKS_PER_QUARTER / 2;
 
-/** Highest fret the editor accepts (24-fret guitars). */
-export const MAX_FRET = 24;
+/** Highest fret the editor accepts (24-fret guitars) — from the core model. */
+export { MAX_FRET };
 
 /** Note values available as the persistent entry duration (Guitar-Pro style). */
 export type DurationValue = "whole" | "half" | "quarter" | "eighth" | "16th" | "32nd";

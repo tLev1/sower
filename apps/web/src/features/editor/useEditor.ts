@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ScoreDocument } from "@sower/core";
 import { TICKS_PER_QUARTER, chordSymbol, keyAtBar, tempoMarkAt, type ChordQuality, type VoicedNote } from "@sower/core";
-import type { SowerEngine } from "@sower/render";
+import type { NoteDragEvent, SowerEngine } from "@sower/render";
 import type { ClickedPosition } from "@sower/render";
 import {
   MAX_FRET,
@@ -653,6 +653,74 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     if (!renderer) return;
     return renderer.onScoreClicked(handleBeatClick);
   }, [renderer, handleBeatClick]);
+
+  /**
+   * Direct manipulation (Phase 1c): the engine resolves the geometry and
+   * snaps the gesture; the editor turns the released proposal into domain
+   * commands. A pitch drag re-fingers the note; a duration-edge drag resizes
+   * the whole rhythmic column it belongs to (a chord shares one value) and
+   * never overwrites the notes after it.
+   */
+  const applyNoteDrag = useCallback(
+    (event: NoteDragEvent) => {
+      if (event.phase !== "end") return;
+      const s = doc.score;
+      const bar = s.bars[event.barIndex];
+      const track = s.tracks[0];
+      const voice = bar?.voices[0];
+      if (!bar || !track || !voice) return;
+      const target = voice.notes.find((n) => n.id === event.noteId);
+      if (!target) return;
+
+      if (event.handle === "body") {
+        if (event.pitch === undefined || event.pitch === target.pitch) return;
+        execute({
+          type: "setNotePitch",
+          trackId: track.id,
+          barId: bar.id,
+          noteId: target.id,
+          pitch: event.pitch,
+          ...(event.fret !== undefined ? { fret: event.fret } : {}),
+          ...(event.string !== undefined ? { string: event.string } : {}),
+        });
+        lastPlacedRef.current = null;
+        setCaret({
+          barIndex: event.barIndex,
+          tick: target.start,
+          stringIndex: event.string ?? target.string ?? caretRef.current.stringIndex,
+        });
+        return;
+      }
+
+      const duration = event.duration;
+      if (duration === undefined || duration === target.duration) return;
+      // the rhythmic column moves as one: every note sharing this note's
+      // start and length resizes together (a chord is one beat)
+      for (const note of voice.notes) {
+        if (note.start !== target.start || note.duration !== target.duration) continue;
+        execute({
+          type: "setNoteDuration",
+          trackId: track.id,
+          barId: bar.id,
+          noteId: note.id,
+          duration,
+        });
+      }
+      lastPlacedRef.current = null;
+      setCaret({
+        barIndex: event.barIndex,
+        tick: target.start,
+        stringIndex: target.string ?? caretRef.current.stringIndex,
+      });
+    },
+    [doc, execute],
+  );
+
+  // direct manipulation: drag pitch / drag duration edge on the rendered score
+  useEffect(() => {
+    if (!renderer) return;
+    return renderer.onNoteDrag(applyNoteDrag);
+  }, [renderer, applyNoteDrag]);
 
   // keep caret inside bounds after structural changes
   useEffect(() => {

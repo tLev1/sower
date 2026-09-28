@@ -1,4 +1,4 @@
-import type { Bar, Note, Rest, Score, Track } from "@sower/core";
+import type { Bar, Note, NoteId, Rest, Score, Track } from "@sower/core";
 import { TICKS_PER_QUARTER, ticksPerBar } from "@sower/core";
 
 /**
@@ -308,6 +308,16 @@ export function beatWidth(duration: number, staffSpace: number): number {
   return Math.max(staffSpace * 1.4, base);
 }
 
+/**
+ * The proportional part of a beat's width, without the minimum-width floor.
+ * Monotonic in `duration`, so distinct rhythm values stay distinguishable —
+ * used for duration-edge geometry (drag snapping and its preview).
+ */
+export function naturalBeatSpan(duration: number, staffSpace: number): number {
+  const quarters = duration / TICKS_PER_QUARTER;
+  return Math.sqrt(Math.max(quarters, 1 / 16)) * staffSpace * 2.05;
+}
+
 const SHARP_ORDER: readonly number[] = [5, 0, 7, 2, 4, 9, 11]; // F C G D A E B
 const FLAT_ORDER: readonly number[] = [11, 9, 7, 2, 0, 5, 10]; // B E A D G C F
 
@@ -517,8 +527,7 @@ function assignBeamGroups(seeds: readonly BeatSeed[], groupTicks: number): numbe
 
 /** Staff position of a note head — same convention as the engraver. */
 function noteStaffPos(note: Note): number {
-  const written = note.string !== null && note.fret !== null ? note.pitch + 12 : note.pitch;
-  return diatonicStep(written) - B4_STEP;
+  return staffPosForNote(note.pitch, note.string !== null && note.fret !== null);
 }
 
 function beatExtremes(seed: BeatSeed): { min: number; max: number } {
@@ -832,17 +841,22 @@ function findBarBox(layout: LayoutDocument, barIndex: number): { system: SystemB
   return null;
 }
 
-/** x within a bar at `tick` — piecewise-linear between beat centers. */
-function xAtTick(bar: BarBox, tick: number): number {
+/** x within a bar at `tick` — piecewise-linear between beat centers.
+ *  Beyond the last beat the x glides toward the closing barline so the caret
+ *  and duration edges can address the tail of the measure. */
+export function xAtTick(bar: BarBox, tick: number): number {
   const beats = bar.tracks[0]?.beats ?? [];
   if (beats.length === 0) return bar.x0 + (bar.x1 - bar.x0) * 0.35;
   const first = beats[0];
   const last = beats[beats.length - 1];
-  if (first && tick <= first.start) {
-    return first.x; // exactly on the first note/rest column
-  }
-  if (last && tick >= last.start) {
-    return Math.min(bar.x1 - 4, last.x);
+  if (!first || !last) return bar.x0;
+  const capacity = ticksPerBar(bar.bar.timeSignature);
+  const tailX = Math.max(bar.x1 - 4, last.x);
+  if (tick <= first.start) return first.x; // exactly on the first note/rest column
+  if (tick >= last.start) {
+    const span = Math.max(capacity - last.start, 1);
+    const t = Math.min(1, Math.max(0, (tick - last.start) / span));
+    return last.x + (tailX - last.x) * t;
   }
   for (let i = 0; i < beats.length - 1; i++) {
     const a = beats[i];
@@ -855,7 +869,34 @@ function xAtTick(bar: BarBox, tick: number): number {
       return a.x + (b.x - a.x) * t;
     }
   }
-  return last ? last.x : bar.x0;
+  return last.x;
+}
+
+/** Tick within a bar at x — the exact inverse of `xAtTick`. */
+export function tickAtX(bar: BarBox, x: number): number {
+  const beats = bar.tracks[0]?.beats ?? [];
+  const capacity = ticksPerBar(bar.bar.timeSignature);
+  if (beats.length === 0) return 0;
+  const first = beats[0];
+  const last = beats[beats.length - 1];
+  if (!first || !last) return 0;
+  const tailX = Math.max(bar.x1 - 4, last.x);
+  if (x <= first.x) return first.start;
+  if (x >= tailX) return capacity;
+  if (x >= last.x) {
+    const t = (x - last.x) / Math.max(tailX - last.x, 1);
+    return last.start + t * Math.max(0, capacity - last.start);
+  }
+  for (let i = 0; i < beats.length - 1; i++) {
+    const a = beats[i];
+    const b = beats[i + 1];
+    if (a && b && x >= a.x && x <= b.x) {
+      const span = b.x - a.x;
+      const t = span > 0 ? (x - a.x) / span : 0;
+      return a.start + t * (b.start - a.start);
+    }
+  }
+  return last.start;
 }
 
 /** Resolves an SVG-space point to the nearest score position. */
@@ -879,30 +920,8 @@ export function positionAt(layout: LayoutDocument, x: number, y: number): Clicke
   // their starts made those regions unwritable)
   let tick = 0;
   const beats = trackBar?.beats ?? [];
-  const first = beats[0];
-  const last = beats[beats.length - 1];
-  if (first && last) {
-    const tailX = Math.min(bar.x1 - 4, last.x);
-    if (x <= first.x) {
-      tick = first.start;
-    } else if (x >= tailX && tailX > last.x) {
-      // beyond the last column: interpolate toward the bar end (barline)
-      const t = Math.min(1, (x - last.x) / Math.max(tailX - last.x, 1));
-      tick = last.start + t * Math.max(0, capacity - last.start);
-    } else {
-      tick = last.start;
-      for (let i = 0; i < beats.length - 1; i++) {
-        const a = beats[i];
-        const b = beats[i + 1];
-        if (a && b && x >= a.x && x <= b.x) {
-          const span = b.x - a.x;
-          const t = span > 0 ? (x - a.x) / span : 0;
-          tick = a.start + t * (b.start - a.start);
-          break;
-        }
-      }
-    }
-    tick = Math.min(Math.max(0, tick), Math.max(0, capacity - 60));
+  if (beats.length > 0) {
+    tick = Math.min(Math.max(0, tickAtX(bar, x)), Math.max(0, capacity - 60));
   }
 
   let stringIndex: number | null = null;
@@ -994,4 +1013,251 @@ function nearestBy<T>(items: readonly T[], centerOf: (item: T) => number, value:
     }
   }
   return best;
+}
+
+// ---------------------------------------------------------------------------
+// Note handles (direct manipulation: drag pitch / drag duration edge)
+// ---------------------------------------------------------------------------
+
+/**
+ * Half-steps above the middle staff line for a note's written pitch.
+ * Matches the engraver exactly (`isGuitar` = a fretted note → written +12).
+ */
+export function staffPosForNote(midi: number, isGuitar: boolean): number {
+  return diatonicStep(isGuitar ? midi + 12 : midi) - B4_STEP;
+}
+
+export type NoteHandleKind = "body" | "edge";
+
+/** One drawn instance of a note: its fret number (TAB) or notehead (notation). */
+export interface NoteBody {
+  readonly barIndex: number;
+  readonly noteId: NoteId;
+  readonly pitch: number;
+  readonly stringIndex: number | null;
+  readonly fret: number | null;
+  /** Body center, absolute SVG coordinates. */
+  readonly x: number;
+  readonly y: number;
+  /** True when this instance lives on the tablature staff. */
+  readonly onTab: boolean;
+}
+
+/** A resolved grab on a note: its body (pitch drag) or its right edge (duration drag). */
+export interface NoteHandleTarget {
+  readonly barIndex: number;
+  readonly noteId: NoteId;
+  readonly handle: NoteHandleKind;
+  readonly x: number;
+  readonly y: number;
+  readonly onTab: boolean;
+}
+
+const BODY_HIT_RADIUS = 10;
+const EDGE_HIT_SLOP = 5;
+
+/**
+ * Every draggable note body on the score. A note can appear twice — once on
+ * the tab staff (fret number) and once on the notation staff (notehead) —
+ * both are grabbable.
+ */
+export function noteBodies(layout: LayoutDocument): NoteBody[] {
+  const out: NoteBody[] = [];
+  for (const system of layout.systems) {
+    for (const bar of system.bars) {
+      for (const tb of bar.tracks) {
+        for (const beat of tb.beats) {
+          if (beat.isRest) continue;
+          const isGuitar = beat.notes.some((n) => n.string !== null && n.fret !== null);
+          for (const note of beat.notes) {
+            if (tb.tab && tb.stringCount > 0 && note.string !== null) {
+              const clamped = Math.min(tb.stringCount - 1, Math.max(0, note.string));
+              out.push({
+                barIndex: bar.index,
+                noteId: note.id,
+                pitch: note.pitch,
+                stringIndex: note.string,
+                fret: note.fret,
+                x: beat.x,
+                y: tb.tabTop + clamped * layout.tabLineGap,
+                onTab: true,
+              });
+            }
+            if (tb.notation) {
+              const pos = staffPosForNote(note.pitch, isGuitar);
+              out.push({
+                barIndex: bar.index,
+                noteId: note.id,
+                pitch: note.pitch,
+                stringIndex: note.string,
+                fret: note.fret,
+                x: beat.x,
+                y: tb.staffTop + layout.staffSpace * 2 - pos * (layout.staffSpace / 2),
+                onTab: false,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Column geometry of a note's rhythmic beat. The note's duration edge sits at
+ * the right of its column — deliberately clear of the neighbouring notehead,
+ * so both the body (pitch / duration) and the edge (duration) stay grabbable.
+ */
+export function beatColumnInfo(
+  layout: LayoutDocument,
+  beat: Beat,
+): { readonly left: number; readonly scale: number } {
+  const natural = naturalBeatSpan(beat.duration, layout.staffSpace);
+  const scale = natural > 0 ? beat.width / natural : 1;
+  return { left: beat.x - beat.width / 2, scale };
+}
+
+/**
+ * Duration → x inside a note's column. Uses the engraver's proportional
+ * (sqrt-of-duration) spacing WITHOUT its minimum-width floor, so every
+ * standard rhythm value maps to a distinct edge position and a drag can
+ * address 32nds and 16ths individually. At the beat's own duration this
+ * returns exactly the column's right edge.
+ */
+export function durationEdgeX(layout: LayoutDocument, beat: Beat, duration: number): number {
+  const { left, scale } = beatColumnInfo(layout, beat);
+  return left + naturalBeatSpan(duration, layout.staffSpace) * scale;
+}
+
+/** A note's duration edge: the grab handle at the right of its rhythmic column. */
+export interface NoteEdge {
+  readonly barIndex: number;
+  readonly noteId: NoteId;
+  readonly x: number;
+  /** Vertical band centred on the note's own body (per-note, not per-staff). */
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/** All note duration edges, in layout order. */
+export function noteEdges(layout: LayoutDocument): NoteEdge[] {
+  const bodies = noteBodies(layout);
+  const bodyY = new Map<string, number>();
+  for (const body of bodies) {
+    const key = `${String(body.barIndex)}:${String(body.noteId)}`;
+    // prefer the tab instance as the band centre (the primary editing surface)
+    const existing = bodyY.get(key);
+    if (existing === undefined || body.onTab) bodyY.set(key, body.y);
+  }
+  const out: NoteEdge[] = [];
+  const band = layout.tabLineGap * 0.85;
+  for (const system of layout.systems) {
+    for (const bar of system.bars) {
+      for (const tb of bar.tracks) {
+        for (const beat of tb.beats) {
+          if (beat.isRest) continue;
+          for (const note of beat.notes) {
+            const key = `${String(bar.index)}:${String(note.id)}`;
+            const y = bodyY.get(key);
+            if (y === undefined) continue;
+            out.push({
+              barIndex: bar.index,
+              noteId: note.id,
+              x: durationEdgeX(layout, beat, note.duration),
+              top: y - band,
+              bottom: y + band,
+            });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolves a point to the note handle under it: the nearest valid candidate
+ * wins, with note bodies favoured on a tie. The edge strip sits at the right
+ * of a note's rhythmic column (clear of the next notehead), so a chord's
+ * stacked notes stay individually grabbable.
+ */
+export function noteHandleAt(
+  layout: LayoutDocument,
+  x: number,
+  y: number,
+  radius: number = BODY_HIT_RADIUS,
+): NoteHandleTarget | null {
+  let bestBody: (NoteBody & { dist: number }) | null = null;
+  for (const body of noteBodies(layout)) {
+    const dist = Math.hypot(body.x - x, body.y - y);
+    if (dist <= radius && (bestBody === null || dist < bestBody.dist)) {
+      bestBody = { ...body, dist };
+    }
+  }
+  let bestEdge: NoteEdge & { dist: number } | null = null;
+  for (const edge of noteEdges(layout)) {
+    if (y < edge.top || y > edge.bottom) continue;
+    const dist = Math.abs(edge.x - x);
+    if (dist <= EDGE_HIT_SLOP && (bestEdge === null || dist < bestEdge.dist)) {
+      bestEdge = { ...edge, dist };
+    }
+  }
+  if (bestEdge && (!bestBody || bestEdge.dist < bestBody.dist - 0.5)) {
+    return {
+      barIndex: bestEdge.barIndex,
+      noteId: bestEdge.noteId,
+      handle: "edge",
+      x: bestEdge.x,
+      y,
+      onTab: false,
+    };
+  }
+  if (bestBody) {
+    const { dist: _dist, ...target } = bestBody;
+    return { ...target, handle: "body" };
+  }
+  return null;
+}
+
+/** The note with `noteId` in `barIndex`, with its beat column and staff geometry. */
+export function findNoteInLayout(
+  layout: LayoutDocument,
+  barIndex: number,
+  noteId: NoteId,
+): { note: Note; beat: Beat; trackBar: TrackBar; bar: BarBox } | null {
+  const found = findBarBox(layout, barIndex);
+  if (!found) return null;
+  for (const tb of found.bar.tracks) {
+    for (const beat of tb.beats) {
+      for (const note of beat.notes) {
+        if (note.id === noteId) return { note, beat, trackBar: tb, bar: found.bar };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * y of a pitch on a bar's staves — where a dragged note would land. Tab wins
+ * when the track has one and a string is known; otherwise the notation staff.
+ */
+export function pitchAnchorY(
+  layout: LayoutDocument,
+  barIndex: number,
+  pitch: number,
+  stringIndex: number | null,
+): number | null {
+  const found = findBarBox(layout, barIndex);
+  if (!found) return null;
+  const tb = found.bar.tracks[0];
+  if (!tb) return null;
+  if (tb.tab && tb.stringCount > 0 && stringIndex !== null) {
+    const clamped = Math.min(tb.stringCount - 1, Math.max(0, stringIndex));
+    return tb.tabTop + clamped * layout.tabLineGap;
+  }
+  if (!tb.notation) return null;
+  const isGuitar = stringIndex !== null;
+  const pos = staffPosForNote(pitch, isGuitar);
+  return tb.staffTop + layout.staffSpace * 2 - pos * (layout.staffSpace / 2);
 }
