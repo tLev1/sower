@@ -4,6 +4,8 @@ import { SowerEngine } from "@sower/render";
 import { ScoreEditor } from "./features/editor/ScoreEditor";
 import { useEditor } from "./features/editor/useEditor";
 import { TransportBar } from "./features/playback/TransportBar";
+import { ShortcutsPanel } from "./features/settings/ShortcutsPanel";
+import { useShortcut } from "./services/useShortcut";
 import { demoScore } from "./demo/demoScore";
 import { attachAutosave, loadActiveScore } from "./services/score-store";
 
@@ -14,6 +16,11 @@ export function App() {
   const editor = useEditor({ document: doc, renderer });
 
   const { container } = editor;
+
+  // the shortcuts panel is itself rebindable (registry id: app.shortcuts)
+  useShortcut("app.shortcuts", () => {
+    editor.setShortcutsOpen(!editor.shortcutsOpen);
+  });
 
   // mount the engine once the editor container exists (StrictMode-safe)
   useEffect(() => {
@@ -83,6 +90,14 @@ export function App() {
           onTempoChange={editor.setTempo}
           onTimeSignatureChange={editor.setTimeSignature}
         />
+        <button
+          type="button"
+          className="tool-btn"
+          onClick={() => { editor.setShortcutsOpen(!editor.shortcutsOpen); }}
+          title="Keyboard shortcuts (Ctrl+/)"
+        >
+          Keys
+        </button>
       </header>
       <main className="workspace">
         <ScoreEditor
@@ -93,6 +108,14 @@ export function App() {
           doc={doc}
         />
       </main>
+      <ShortcutsPanel
+        open={editor.shortcutsOpen}
+        overrides={editor.shortcuts}
+        conflicts={editor.shortcutConflicts}
+        onChange={editor.setShortcuts}
+        onResetAll={editor.resetShortcuts}
+        onClose={() => { editor.setShortcutsOpen(false); }}
+      />
     </div>
   );
 }

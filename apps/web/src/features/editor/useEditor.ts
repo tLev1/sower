@@ -4,6 +4,16 @@ import { TICKS_PER_QUARTER, chordSymbol, keyAtBar, tempoMarkAt, type ChordQualit
 import type { NoteDragEvent, SowerEngine } from "@sower/render";
 import type { ClickedPosition } from "@sower/render";
 import {
+  currentBindings,
+  findConflicts,
+  resetBindings,
+  resolveShortcut,
+  setBindings,
+  shortcutDef,
+  subscribeBindings,
+  type ShortcutOverrides,
+} from "../../services/shortcuts";
+import {
   MAX_FRET,
   capacityOf,
   createCaret,
@@ -30,9 +40,11 @@ interface UseEditorArgs {
 /** Minimal structural key event — satisfied by both DOM and React events. */
 interface KeyLike {
   readonly key: string;
+  readonly code: string;
   readonly ctrlKey: boolean;
   readonly metaKey: boolean;
   readonly shiftKey: boolean;
+  readonly altKey: boolean;
   readonly target: EventTarget | null;
   preventDefault(): void;
 }
@@ -44,6 +56,39 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
     target.tagName === "TEXTAREA" ||
     target.tagName === "SELECT" ||
     target.isContentEditable
+  );
+}
+
+/**
+ * The digit a fret shortcut stands for (0-9), or null when the shortcut is
+ * not a digit. `fret.tens.1` / `fret.tens.2` double as "1" / "2" while a
+ * two-digit entry is pending, so the tens chord can be repeated.
+ */
+function fretDigitOf(id: string | null): number | null {
+  if (id === null) return null;
+  if (id.startsWith("fret.") && id.length === 6) {
+    const digit = Number(id.slice(5));
+    return Number.isInteger(digit) ? digit : null;
+  }
+  if (id === "fret.tens.1") return 1;
+  if (id === "fret.tens.2") return 2;
+  return null;
+}
+
+/**
+ * A bare modifier press is never an action on its own — it must not cancel a
+ * pending two-digit fret entry (Ctrl+1, then holding Ctrl, then 2 → fret 12).
+ */
+function isModifierCode(code: string): boolean {
+  return (
+    code === "ControlLeft" ||
+    code === "ControlRight" ||
+    code === "ShiftLeft" ||
+    code === "ShiftRight" ||
+    code === "AltLeft" ||
+    code === "AltRight" ||
+    code === "MetaLeft" ||
+    code === "MetaRight"
   );
 }
 
@@ -494,124 +539,137 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     return "applied";
   }, [doc, execute]);
 
+  // -- rebindable keyboard shortcuts ----------------------------------------
+
+  const [shortcuts, setShortcutsState] = useState<ShortcutOverrides>(currentBindings);
+  useEffect(() => subscribeBindings(() => { setShortcutsState(currentBindings()); }), []);
+  const shortcutsRef = useRef(shortcuts);
+  shortcutsRef.current = shortcuts;
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  /** Applies new bindings (persists them; every keymap updates immediately). */
+  const setShortcuts = useCallback((next: ShortcutOverrides): void => {
+    setBindings(next);
+  }, []);
+
+  /** Restores every shortcut to its default binding. */
+  const resetShortcuts = useCallback((): void => {
+    resetBindings();
+  }, []);
+
+  const shortcutConflicts = useMemo(() => findConflicts(shortcuts), [shortcuts]);
+
   const handleKeyDown = useCallback(
     (e: KeyLike) => {
-      if (isTextEntryTarget(e.target)) return;
-      const ctrl = e.ctrlKey || e.metaKey;
-      if (ctrl && e.key.toLowerCase() === "z") {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-        pendingFretRef.current = null;
-        setPendingFret(null);
-        return;
-      }
-      if (ctrl && e.key.toLowerCase() === "y") {
-        e.preventDefault();
-        redo();
-        pendingFretRef.current = null;
-        setPendingFret(null);
-        return;
-      }
-      if (ctrl) {
-        // Ctrl+1 / Ctrl+2 start a two-digit fret entry (frets 10-24).
-        // The next digit — plain, or still with Ctrl held — completes it.
-        if (/^[0-9]$/.test(e.key)) {
-          e.preventDefault();
-          const d = Number(e.key);
-          const pending = pendingFretRef.current;
-          if (pending !== null) {
-            const fret = pending * 10 + d;
-            pendingFretRef.current = null;
-            setPendingFret(null);
-            if (fret <= MAX_FRET) placeFret(fret);
-          } else if (d === 1 || d === 2) {
-            pendingFretRef.current = d;
-            setPendingFret(d);
-          }
-        }
-        return;
-      }
+      if (isModifierCode(e.code)) return;
+      const textEntry = isTextEntryTarget(e.target);
+      const id = resolveShortcut(e, shortcutsRef.current);
+      const def = id ? shortcutDef(id) : null;
 
-      if (/^[0-9]$/.test(e.key)) {
-        e.preventDefault();
-        const pending = pendingFretRef.current;
-        if (pending !== null) {
-          const fret = pending * 10 + Number(e.key);
+      // a pending two-digit fret is completed by ANY digit shortcut — plain or
+      // with the tens modifier still held (Ctrl+1 then Ctrl+2 = fret 12) —
+      // and cancelled by any other key
+      if (pendingFretRef.current !== null) {
+        const digit = fretDigitOf(id);
+        if (digit !== null) {
+          e.preventDefault();
+          const fret = pendingFretRef.current * 10 + digit;
           pendingFretRef.current = null;
           setPendingFret(null);
           if (fret <= MAX_FRET) placeFret(fret);
           return;
         }
-        placeFret(Number(e.key));
-        return;
-      }
-      if (pendingFretRef.current !== null && e.key !== "Shift") {
         pendingFretRef.current = null;
         setPendingFret(null);
       }
-      switch (e.key) {
-        case "ArrowRight":
-          e.preventDefault();
-          navigate(1, 0);
+
+      if (!id || !def) return;
+      if (textEntry && !def.global) return;
+      e.preventDefault();
+
+      switch (id) {
+        case "fret.0":
+        case "fret.1":
+        case "fret.2":
+        case "fret.3":
+        case "fret.4":
+        case "fret.5":
+        case "fret.6":
+        case "fret.7":
+        case "fret.8":
+        case "fret.9":
+          placeFret(Number(id.slice(5)));
           break;
-        case "ArrowLeft":
-          e.preventDefault();
-          navigate(-1, 0);
+        case "fret.tens.1":
+          pendingFretRef.current = 1;
+          setPendingFret(1);
           break;
-        case "ArrowUp":
-          e.preventDefault();
-          navigate(0, -1);
+        case "fret.tens.2":
+          pendingFretRef.current = 2;
+          setPendingFret(2);
           break;
-        case "ArrowDown":
-          e.preventDefault();
-          navigate(0, 1);
-          break;
-        case "Backspace":
-          e.preventDefault();
-          deleteAtCaret();
-          break;
-        case "Delete":
-          e.preventDefault();
-          deleteBeatAtCaret();
-          break;
-        case "b":
-        case "B":
-          e.preventDefault();
+        case "entry.rest":
           writeRest();
           break;
-        case "m":
-        case "M":
-          e.preventDefault();
+        case "artic.palmMute":
           toggleArticulation("palmMute");
           break;
-        case "s":
-        case "S":
-          e.preventDefault();
+        case "artic.staccato":
           toggleArticulation("staccato");
           break;
-        case "r":
-        case "R":
-          e.preventDefault();
+        case "artic.letRing":
           toggleArticulation("letRing");
           break;
-        case "g":
-        case "G":
-          e.preventDefault();
+        case "artic.ghost":
           toggleArticulation("ghost");
           break;
-        case "a":
-        case "A":
-          e.preventDefault();
+        case "artic.accent":
           toggleArticulation("accent");
           break;
-        case " ":
-          e.preventDefault();
+        case "nav.left":
+          navigate(-1, 0);
+          break;
+        case "nav.right":
+          navigate(1, 0);
+          break;
+        case "nav.up":
+          navigate(0, -1);
+          break;
+        case "nav.down":
+          navigate(0, 1);
+          break;
+        case "edit.deleteNote":
+          deleteAtCaret();
+          break;
+        case "edit.deleteBeat":
+          deleteBeatAtCaret();
+          break;
+        case "edit.undo":
+          undo();
+          break;
+        case "edit.redo":
+          redo();
+          break;
+        case "transport.playPause":
           rendererRef.current?.toggle();
+          break;
+        case "app.shortcuts":
+          setShortcutsOpen((open) => !open);
+          break;
+        default:
           break;
       }
     },
-    [placeFret, deleteAtCaret, deleteBeatAtCaret, writeRest, toggleArticulation, navigate, undo, redo],
+    [
+      placeFret,
+      deleteAtCaret,
+      deleteBeatAtCaret,
+      writeRest,
+      toggleArticulation,
+      navigate,
+      undo,
+      redo,
+    ],
   );
 
   // window-level keyboard: editing works without focusing the score canvas
@@ -775,5 +833,11 @@ export function useEditor({ document: doc, renderer }: UseEditorArgs) {
     setTimeSignature,
     setTimeSignatureAtBar,
     handleKeyDown,
+    shortcuts,
+    shortcutConflicts,
+    shortcutsOpen,
+    setShortcutsOpen,
+    setShortcuts,
+    resetShortcuts,
   };
 }

@@ -4,6 +4,7 @@ import { DurationPicker } from "./DurationPicker";
 import { SheetMenu, type SheetMenuState } from "./SheetMenu";
 import { HumControls } from "../input/HumControls";
 import { useHumInput } from "../input/useHumInput";
+import { useShortcut } from "../../services/useShortcut";
 import type { useEditor } from "./useEditor";
 import type { SowerEngine } from "@sower/render";
 import type { Score, ScoreDocument } from "@sower/core";
@@ -26,6 +27,8 @@ interface ScoreEditorProps {
 export function ScoreEditor({ score, caret, editor, renderer, doc }: ScoreEditorProps) {
   const [menu, setMenu] = useState<SheetMenuState | null>(null);
   const hum = useHumInput({ document: doc, editor });
+  // the hum toggle is rebindable through the shortcuts registry
+  useShortcut("input.hum", hum.toggle);
 
   // re-render whenever the document changes
   useEffect(() => {
